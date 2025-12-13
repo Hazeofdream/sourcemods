@@ -44,28 +44,28 @@ public Plugin myinfo =
     name        = "Sniper VS Specials",
     author      = "Haze_of_dream",
     description = "Sniper Rifles Instantly kill certain special infected.",
-    version     = "1.6",
+    version     = "1.7",
     url         = ""
 };
 
 public void OnPluginStart()
 {
     g_hSIDisable = CreateConVar(
-        "snipervs_si_disable",
+        "svs_disable",
         "64",
         "1=Smoker 2=Boomer 4=Hunter 8=Spitter 16=Jockey 32=Charger 64=Tank (Add Together to disable being affected, 0=all, 127=none)",
         FCVAR_NOTIFY
     );
 
     g_hWeaponMask = CreateConVar(
-        "snipervs_weapon_mask",
+        "svs_weapon",
         "3",
         "Affected snipers: 1=Scout 2=AWP",
         FCVAR_NOTIFY
     );
 
     g_hModeMask = CreateConVar(
-        "snipervs_enable_modes",
+        "svs_mode",
         "0",
         "Enable modes: 0=All, 1=Coop, 2=Survival, 4=Versus, 8=Scavenge",
         FCVAR_NOTIFY
