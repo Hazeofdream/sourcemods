@@ -1,0 +1,1 @@
+A plugin that informs users of friendly fire instances. Uses a simple print system
