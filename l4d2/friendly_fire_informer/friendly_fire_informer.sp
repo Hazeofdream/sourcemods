@@ -109,21 +109,17 @@ public void ProcessFrameDamage(any data)
 
             if (incapped)
             {
-                // Health before damage is what actually mattered
-                int hpBefore = health + totalDamage;
-
                 PrintToChatAll(
-                    "\x03%s \x01downed \x04%s \x01for \x05%d\x01 damage (\x05%d\x01 HP total)",
+                    "\x03%s \x01downed \x04%s \x01for \x05%d\x01 damage",
                     attackerName,
                     victimName,
-                    totalDamage,
-                    hpBefore
+                    totalDamage
                 );
             }
             else
             {
                 PrintToChatAll(
-                    "\x03%s \x01dealt \x05%d\x01 damage to \x04%s\x01, Total hp: \x05%d\x01/100",
+                    "\x03%s \x01dealt \x05%d\x01 damage to \x04%s\x01, Health: \x05%d\x01/100",
                     attackerName,
                     totalDamage,
                     victimName,
