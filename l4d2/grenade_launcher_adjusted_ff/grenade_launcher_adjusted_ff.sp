@@ -73,15 +73,24 @@ public Action OnTakeDamage(
         return Plugin_Continue;
 
     // --- Self-damage ---
-    if (victim == attacker)
-    {
-		// Damage isn't accurate due to valve's default self-damage scale
-		// So revert to pre-nerf value
-		damage /= 0.12;
-	
-        damage *= g_hSelfScale.FloatValue;
-        return Plugin_Changed;
-    }
+	if (victim == attacker)
+	{
+		float finalDamage = damage * g_hSelfScale.FloatValue;
+
+		int health = GetClientHealth(victim);
+		bool incapacitated = GetEntProp(victim, Prop_Send, "m_isIncapacitated") != 0;
+
+		// If this damage would kill or incap, preserve survivor ownership
+		if (!incapacitated && finalDamage >= float(health))
+		{
+			damage = finalDamage;
+			return Plugin_Changed;
+		}
+
+		// Normal self-damage scaling
+		damage = finalDamage;
+		return Plugin_Changed;
+	}
 
     // --- Teammate damage ---
 	attacker = 0;
