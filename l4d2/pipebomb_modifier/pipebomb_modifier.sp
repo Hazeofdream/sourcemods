@@ -4,26 +4,27 @@
 #include <sourcemod>
 #include <sdktools>
 
-ConVar g_hPipeDuration;
-
 public Plugin myinfo =
 {
     name        = "Pipebomb Modifier",
     author      = "Haze_of_dream",
-    description = "Allows changing pipe bomb fuse duration via cvar",
-    version     = "1.0",
-    url         = ""
+    description = "Correctly modifies pipe bomb fuse time and beep scaling",
+    version     = "1.1"
 };
+
+ConVar g_hFuseTime;
+
+#define VANILLA_FUSE 6.0
 
 public void OnPluginStart()
 {
-    g_hPipeDuration = CreateConVar(
-        "pipebomb_duration",
+    g_hFuseTime = CreateConVar(
+        "pipebomb_fuse_time",
         "12.0",
-        "How long (in seconds) pipe bombs last before exploding",
+        "Pipe bomb fuse time in seconds",
         FCVAR_NOTIFY,
-        true, 0.1,
-        true, 30.0
+        true, 1.0,
+        true, 60.0
     );
 
     AutoExecConfig(true, "pipebomb_modifier");
@@ -34,20 +35,28 @@ public void OnEntityCreated(int entity, const char[] classname)
     if (!StrEqual(classname, "pipe_bomb_projectile"))
         return;
 
-    // Delay one frame so netprops exist
-    CreateTimer(0.0, Timer_AdjustPipe, EntIndexToEntRef(entity));
+    // One-frame delay so netprops exist
+    CreateTimer(0.0, AdjustPipeBombFuse, EntIndexToEntRef(entity));
 }
 
-public Action Timer_AdjustPipe(Handle timer, int ref)
+public Action AdjustPipeBombFuse(Handle timer, any ref)
 {
-    int entity = EntRefToEntIndex(ref);
-    if (entity == INVALID_ENT_REFERENCE)
+    int ent = EntRefToEntIndex(ref);
+    if (ent == INVALID_ENT_REFERENCE)
         return Plugin_Stop;
 
-    float duration = g_hPipeDuration.FloatValue;
-    float gameTime = GetGameTime();
+    float fuse = g_hFuseTime.FloatValue;
+    float now  = GetGameTime();
 
-    SetEntPropFloat(entity, Prop_Send, "m_flDetonateTime", gameTime + duration);
+    // Set new detonation time
+    SetEntPropFloat(ent, Prop_Send, "m_flDetonateTime", now + fuse);
+
+    // Scale beep think interval properly
+    float scale = fuse / VANILLA_FUSE;
+    float nextBeep = now + (0.45 * scale);
+
+    // This prop DOES exist and controls beep pacing
+    SetEntPropFloat(ent, Prop_Send, "m_flNextBeepTime", nextBeep);
 
     return Plugin_Stop;
 }
