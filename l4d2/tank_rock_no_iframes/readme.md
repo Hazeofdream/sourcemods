@@ -1,0 +1,1 @@
+A plugin that removes invincibility frames from a tank's rock when thrown.
