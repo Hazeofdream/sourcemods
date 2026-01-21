@@ -8,8 +8,8 @@ public Plugin myinfo =
 {
     name        = "Director Player Scaling",
     author      = "Haze_of_dream",
-    description = "Director & Tank scaling anchored to a base survivor count",
-    version     = "1.5"
+    description = "Director, Tank HP, and SI respawn scaling anchored to base survivor count",
+    version     = "1.6"
 };
 
 // =====================
@@ -28,7 +28,8 @@ public Plugin myinfo =
 #define BASE_MOB_MAX         60
 #define BASE_WANDERERS       30
 
-#define BASE_TANK_HP         7000
+// Original director SI respawn interval (Expert baseline)
+#define BASE_SI_RESPAWN_TIME 20.0
 
 // =====================
 // ConVars
@@ -52,6 +53,10 @@ ConVar cvMobMin;
 ConVar cvMobMax;
 ConVar cvWanderers;
 
+// Tank & SI respawn
+ConVar cvTankHealth;
+ConVar cvSIRespawn;
+
 // =====================
 // Plugin start
 // =====================
@@ -61,10 +66,10 @@ public void OnPluginStart()
     cvBaseSurvivors = CreateConVar(
         "dps_base_survivor_count",
         "4",
-        "Survivor count the base #define values are balanced for",
+        "Survivor count the base values are balanced for",
         FCVAR_NOTIFY,
         true, 1.0,
-        true, 10.0
+        true, 31.0
     );
 
     cvMaxScaleSurvivors = CreateConVar(
@@ -73,16 +78,16 @@ public void OnPluginStart()
         "Maximum survivor count used for scaling",
         FCVAR_NOTIFY,
         true, 1.0,
-        true, 16.0
+        true, 31.0
     );
 
     cvScaleIntensity = CreateConVar(
         "dps_scale_intensity",
         "1.0",
-        "Scaling intensity (1.0 = linear from base)",
+        "Scaling intensity (1.0 = linear)",
         FCVAR_NOTIFY,
         true, 0.0,
-        true, 3.0
+        true, 10.0
     );
 
     AutoExecConfig(true, "director_player_scaling");
@@ -95,11 +100,15 @@ public void OnPluginStart()
     cvSpitter = FindConVar("z_spitter_limit");
     cvBoomer  = FindConVar("z_boomer_limit");
 
-    // Director
+    // Director pacing
     cvCommonLimit = FindConVar("z_common_limit");
     cvMobMin      = FindConVar("z_mob_spawn_min_size");
     cvMobMax      = FindConVar("z_mob_spawn_max_size");
     cvWanderers   = FindConVar("z_reserved_wanderers");
+
+    // Tank & SI respawn
+    cvTankHealth  = FindConVar("z_tank_health");
+    cvSIRespawn   = FindConVar("z_special_respawn_interval");
 
     HookEvent("tank_spawn", Event_TankSpawn, EventHookMode_Post);
 
@@ -113,10 +122,10 @@ public void OnPluginStart()
 
 public Action UpdateDirectorValues(Handle timer)
 {
-    int survivors = GetSurvivorCount();
+    int survivors = GetSurvivorCount(); // includes bots
     float scale = GetScalingFactor(survivors);
 
-    int stunlockCap = survivors;
+    int stunlockCap = survivors; // humans + bots
 
     SetConVarInt(cvSmoker,  Clamp(RoundToCeil(BASE_SMOKER_LIMIT  * scale), 1, stunlockCap));
     SetConVarInt(cvHunter,  Clamp(RoundToCeil(BASE_HUNTER_LIMIT  * scale), 1, stunlockCap));
@@ -131,11 +140,18 @@ public Action UpdateDirectorValues(Handle timer)
     SetConVarInt(cvMobMax, RoundToCeil(BASE_MOB_MAX * scale));
     SetConVarInt(cvWanderers, RoundToCeil(BASE_WANDERERS * scale));
 
+    // SI respawn scaling (more survivors = faster respawns)
+    float respawn = BASE_SI_RESPAWN_TIME / scale;
+    if (respawn < 5.0)
+        respawn = 5.0; // safety floor
+
+    SetConVarFloat(cvSIRespawn, respawn);
+
     return Plugin_Continue;
 }
 
 // =====================
-// Tank HP scaling
+// Tank HP scaling (z_tank_health based)
 // =====================
 
 public void Event_TankSpawn(Event event, const char[] name, bool dontBroadcast)
@@ -144,15 +160,17 @@ public void Event_TankSpawn(Event event, const char[] name, bool dontBroadcast)
     if (!IsValidClient(tank))
         return;
 
-    float scale = GetScalingFactor(GetSurvivorCount());
-    int hp = RoundToNearest(BASE_TANK_HP * scale);
+    float baseHP = float(cvTankHealth.IntValue);
+    float scale  = GetScalingFactor(GetSurvivorCount());
+
+    int hp = RoundToNearest(baseHP * scale);
 
     SetEntProp(tank, Prop_Data, "m_iHealth", hp);
     SetEntProp(tank, Prop_Data, "m_iMaxHealth", hp);
 }
 
 // =====================
-// Scaling logic (CORRECTED)
+// Scaling logic
 // =====================
 
 float GetScalingFactor(int survivors)
@@ -178,6 +196,7 @@ int GetSurvivorCount()
     int count = 0;
     for (int i = 1; i <= MaxClients; i++)
     {
+        // Includes bots AND humans
         if (IsClientInGame(i) && GetClientTeam(i) == 2)
             count++;
     }

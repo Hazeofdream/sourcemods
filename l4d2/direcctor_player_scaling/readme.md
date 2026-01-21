@@ -4,12 +4,12 @@ Convars:
 
 dps_base_survivor_count
 Survivor count the base #define values are balanced for
-Default: 4, Max: 10
+Default: 4, Max: 31
 
 dps_max_scaled_survivors
 Maximum survivor count used for scaling
-Default: 1, Max: 16
+Default: 1, Max: 31
 
 dps_scale_intensity
 Scaling intensity (1.0 = linear from base)
-Default: 1, Max: 3
+Default: 1, Max: 10
