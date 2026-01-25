@@ -8,12 +8,12 @@ public Plugin myinfo =
 {
     name        = "Director Player Scaling",
     author      = "Haze_of_dream",
-    description = "Director, Tank HP, and SI respawn scaling anchored to base survivor count",
-    version     = "1.6"
+    description = "Event-driven director and Tank HP scaling for high-player servers",
+    version     = "1.7"
 };
 
 // =====================
-// Base values (balanced for BASE_SURVIVORS)
+// Base values (balanced for BASE survivor count)
 // =====================
 
 #define BASE_SMOKER_LIMIT    1
@@ -28,8 +28,7 @@ public Plugin myinfo =
 #define BASE_MOB_MAX         60
 #define BASE_WANDERERS       30
 
-// Original director SI respawn interval (Expert baseline)
-#define BASE_SI_RESPAWN_TIME 20.0
+#define BASE_SI_RESPAWN_TIME 20.0   // Expert baseline
 
 // =====================
 // ConVars
@@ -66,19 +65,19 @@ public void OnPluginStart()
     cvBaseSurvivors = CreateConVar(
         "dps_base_survivor_count",
         "4",
-        "Survivor count the base values are balanced for",
+        "Survivor count base values are balanced for",
         FCVAR_NOTIFY,
         true, 1.0,
-        true, 31.0
+        true, 10.0
     );
 
     cvMaxScaleSurvivors = CreateConVar(
         "dps_max_scaled_survivors",
-        "8",
+        "10",
         "Maximum survivor count used for scaling",
         FCVAR_NOTIFY,
         true, 1.0,
-        true, 31.0
+        true, 16.0
     );
 
     cvScaleIntensity = CreateConVar(
@@ -87,7 +86,7 @@ public void OnPluginStart()
         "Scaling intensity (1.0 = linear)",
         FCVAR_NOTIFY,
         true, 0.0,
-        true, 10.0
+        true, 3.0
     );
 
     AutoExecConfig(true, "director_player_scaling");
@@ -107,52 +106,40 @@ public void OnPluginStart()
     cvWanderers   = FindConVar("z_reserved_wanderers");
 
     // Tank & SI respawn
-    cvTankHealth  = FindConVar("z_tank_health");
-    cvSIRespawn   = FindConVar("z_special_respawn_interval");
+    cvTankHealth = FindConVar("z_tank_health");
+    cvSIRespawn  = FindConVar("z_special_respawn_interval");
 
+    // Survivor count change events
+    HookEvent("player_team", Event_PlayerTeam, EventHookMode_Post);
+    HookEvent("player_disconnect", Event_PlayerDisconnect, EventHookMode_Post);
+    HookEvent("bot_player_replace", Event_PlayerSwap, EventHookMode_Post);
+    HookEvent("player_bot_replace", Event_PlayerSwap, EventHookMode_Post);
+
+    // Tank HP
     HookEvent("tank_spawn", Event_TankSpawn, EventHookMode_Post);
 
-    CreateTimer(5.0, UpdateDirectorValues,
-        _, TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
+    // Initial application
+    ApplyDirectorScaling();
 }
 
 // =====================
-// Director scaling
+// Event handlers
 // =====================
 
-public Action UpdateDirectorValues(Handle timer)
+public void Event_PlayerTeam(Event event, const char[] name, bool dontBroadcast)
 {
-    int survivors = GetSurvivorCount(); // includes bots
-    float scale = GetScalingFactor(survivors);
-
-    int stunlockCap = survivors; // humans + bots
-
-    SetConVarInt(cvSmoker,  Clamp(RoundToCeil(BASE_SMOKER_LIMIT  * scale), 1, stunlockCap));
-    SetConVarInt(cvHunter,  Clamp(RoundToCeil(BASE_HUNTER_LIMIT  * scale), 1, stunlockCap));
-    SetConVarInt(cvJockey,  Clamp(RoundToCeil(BASE_JOCKEY_LIMIT  * scale), 1, stunlockCap));
-    SetConVarInt(cvCharger, Clamp(RoundToCeil(BASE_CHARGER_LIMIT * scale), 1, stunlockCap));
-
-    SetConVarInt(cvSpitter, RoundToCeil(BASE_SPITTER_LIMIT * scale));
-    SetConVarInt(cvBoomer,  RoundToCeil(BASE_BOOMER_LIMIT  * scale));
-
-    SetConVarInt(cvCommonLimit, RoundToCeil(BASE_COMMON_LIMIT * scale));
-    SetConVarInt(cvMobMin, RoundToCeil(BASE_MOB_MIN * scale));
-    SetConVarInt(cvMobMax, RoundToCeil(BASE_MOB_MAX * scale));
-    SetConVarInt(cvWanderers, RoundToCeil(BASE_WANDERERS * scale));
-
-    // SI respawn scaling (more survivors = faster respawns)
-    float respawn = BASE_SI_RESPAWN_TIME / scale;
-    if (respawn < 5.0)
-        respawn = 5.0; // safety floor
-
-    SetConVarFloat(cvSIRespawn, respawn);
-
-    return Plugin_Continue;
+    ApplyDirectorScaling();
 }
 
-// =====================
-// Tank HP scaling (z_tank_health based)
-// =====================
+public void Event_PlayerDisconnect(Event event, const char[] name, bool dontBroadcast)
+{
+    ApplyDirectorScaling();
+}
+
+public void Event_PlayerSwap(Event event, const char[] name, bool dontBroadcast)
+{
+    ApplyDirectorScaling();
+}
 
 public void Event_TankSpawn(Event event, const char[] name, bool dontBroadcast)
 {
@@ -170,13 +157,49 @@ public void Event_TankSpawn(Event event, const char[] name, bool dontBroadcast)
 }
 
 // =====================
-// Scaling logic
+// Director scaling logic
+// =====================
+
+void ApplyDirectorScaling()
+{
+    int survivors = GetSurvivorCount();
+    float scale = GetScalingFactor(survivors);
+
+    int stunlockCap = survivors;
+
+    SetConVarInt(cvSmoker,  Clamp(RoundToCeil(BASE_SMOKER_LIMIT  * scale), 1, stunlockCap));
+    SetConVarInt(cvHunter,  Clamp(RoundToCeil(BASE_HUNTER_LIMIT  * scale), 1, stunlockCap));
+    SetConVarInt(cvJockey,  Clamp(RoundToCeil(BASE_JOCKEY_LIMIT  * scale), 1, stunlockCap));
+    SetConVarInt(cvCharger, Clamp(RoundToCeil(BASE_CHARGER_LIMIT * scale), 1, stunlockCap));
+
+    SetConVarInt(cvSpitter, RoundToCeil(BASE_SPITTER_LIMIT * scale));
+    SetConVarInt(cvBoomer,  RoundToCeil(BASE_BOOMER_LIMIT  * scale));
+
+    SetConVarInt(cvCommonLimit, RoundToCeil(BASE_COMMON_LIMIT * scale));
+    SetConVarInt(cvMobMin, RoundToCeil(BASE_MOB_MIN * scale));
+    SetConVarInt(cvMobMax, RoundToCeil(BASE_MOB_MAX * scale));
+    SetConVarInt(cvWanderers, RoundToCeil(BASE_WANDERERS * scale));
+
+    // Faster SI respawns with more survivors
+    float respawn = BASE_SI_RESPAWN_TIME / scale;
+    if (respawn < 5.0)
+        respawn = 5.0;
+
+    SetConVarFloat(cvSIRespawn, respawn);
+}
+
+// =====================
+// Scaling math (FIXED)
 // =====================
 
 float GetScalingFactor(int survivors)
 {
     int base = cvBaseSurvivors.IntValue;
     int max  = cvMaxScaleSurvivors.IntValue;
+
+    // Never scale BELOW base
+    if (survivors <= base)
+        return 1.0;
 
     if (survivors > max)
         survivors = max;
@@ -196,7 +219,7 @@ int GetSurvivorCount()
     int count = 0;
     for (int i = 1; i <= MaxClients; i++)
     {
-        // Includes bots AND humans
+        // Includes humans and bots
         if (IsClientInGame(i) && GetClientTeam(i) == 2)
             count++;
     }
