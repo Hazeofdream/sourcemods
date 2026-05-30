@@ -107,7 +107,7 @@ public void OnPluginStart()
 
     // Tank & SI respawn
     cvTankHealth = FindConVar("z_tank_health");
-    cvSIRespawn  = FindConVar("z_special_respawn_interval");
+    cvSIRespawn  = FindConVar("z_special_spawn_interval");
 
     // Survivor count change events
     HookEvent("player_team", Event_PlayerTeam, EventHookMode_Post);
