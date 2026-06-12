@@ -9,11 +9,11 @@ public Plugin myinfo =
     name        = "Director Player Scaling",
     author      = "Haze_of_dream",
     description = "Event-driven director and Tank HP scaling for high-player servers",
-    version     = "1.7"
+    version     = "1.8"
 };
 
 // =====================
-// Base values (balanced for BASE survivor count)
+// Base values
 // =====================
 
 #define BASE_SMOKER_LIMIT    1
@@ -24,11 +24,11 @@ public Plugin myinfo =
 #define BASE_BOOMER_LIMIT    2
 
 #define BASE_COMMON_LIMIT    120
-#define BASE_MOB_MIN         30
-#define BASE_MOB_MAX         60
+#define BASE_MOB_MIN         20
+#define BASE_MOB_MAX         50
 #define BASE_WANDERERS       30
 
-#define BASE_SI_RESPAWN_TIME 20.0   // Expert baseline
+#define BASE_SI_RESPAWN_TIME 20.0
 
 // =====================
 // ConVars
@@ -38,23 +38,7 @@ ConVar cvBaseSurvivors;
 ConVar cvMaxScaleSurvivors;
 ConVar cvScaleIntensity;
 
-// SI limits
-ConVar cvSmoker;
-ConVar cvHunter;
-ConVar cvJockey;
-ConVar cvCharger;
-ConVar cvSpitter;
-ConVar cvBoomer;
-
-// Director
-ConVar cvCommonLimit;
-ConVar cvMobMin;
-ConVar cvMobMax;
-ConVar cvWanderers;
-
-// Tank & SI respawn
 ConVar cvTankHealth;
-ConVar cvSIRespawn;
 
 // =====================
 // Plugin start
@@ -73,11 +57,11 @@ public void OnPluginStart()
 
     cvMaxScaleSurvivors = CreateConVar(
         "dps_max_scaled_survivors",
-        "10",
+        "281",
         "Maximum survivor count used for scaling",
         FCVAR_NOTIFY,
         true, 1.0,
-        true, 16.0
+        true, 31.0
     );
 
     cvScaleIntensity = CreateConVar(
@@ -91,34 +75,15 @@ public void OnPluginStart()
 
     AutoExecConfig(true, "director_player_scaling");
 
-    // SI limits
-    cvSmoker  = FindConVar("z_smoker_limit");
-    cvHunter  = FindConVar("z_hunter_limit");
-    cvJockey  = FindConVar("z_jockey_limit");
-    cvCharger = FindConVar("z_charger_limit");
-    cvSpitter = FindConVar("z_spitter_limit");
-    cvBoomer  = FindConVar("z_boomer_limit");
-
-    // Director pacing
-    cvCommonLimit = FindConVar("z_common_limit");
-    cvMobMin      = FindConVar("z_mob_spawn_min_size");
-    cvMobMax      = FindConVar("z_mob_spawn_max_size");
-    cvWanderers   = FindConVar("z_reserved_wanderers");
-
-    // Tank & SI respawn
     cvTankHealth = FindConVar("z_tank_health");
-    cvSIRespawn  = FindConVar("z_special_spawn_interval");
 
-    // Survivor count change events
     HookEvent("player_team", Event_PlayerTeam, EventHookMode_Post);
     HookEvent("player_disconnect", Event_PlayerDisconnect, EventHookMode_Post);
     HookEvent("bot_player_replace", Event_PlayerSwap, EventHookMode_Post);
     HookEvent("player_bot_replace", Event_PlayerSwap, EventHookMode_Post);
 
-    // Tank HP
     HookEvent("tank_spawn", Event_TankSpawn, EventHookMode_Post);
 
-    // Initial application
     ApplyDirectorScaling();
 }
 
@@ -147,13 +112,24 @@ public void Event_TankSpawn(Event event, const char[] name, bool dontBroadcast)
     if (!IsValidClient(tank))
         return;
 
-    float baseHP = float(cvTankHealth.IntValue);
-    float scale  = GetScalingFactor(GetSurvivorCount());
+    float baseHP = 4000.0;
+
+    if (cvTankHealth != null)
+        baseHP = float(cvTankHealth.IntValue);
+
+    float scale = GetScalingFactor(GetSurvivorCount());
 
     int hp = RoundToNearest(baseHP * scale);
 
     SetEntProp(tank, Prop_Data, "m_iHealth", hp);
     SetEntProp(tank, Prop_Data, "m_iMaxHealth", hp);
+
+    PrintToServer(
+        "[Director Scaling] Tank spawned with %d HP (base %.0f, scale %.2f)",
+        hp,
+        baseHP,
+        scale
+    );
 }
 
 // =====================
@@ -167,29 +143,72 @@ void ApplyDirectorScaling()
 
     int stunlockCap = survivors;
 
-    SetConVarInt(cvSmoker,  Clamp(RoundToCeil(BASE_SMOKER_LIMIT  * scale), 1, stunlockCap));
-    SetConVarInt(cvHunter,  Clamp(RoundToCeil(BASE_HUNTER_LIMIT  * scale), 1, stunlockCap));
-    SetConVarInt(cvJockey,  Clamp(RoundToCeil(BASE_JOCKEY_LIMIT  * scale), 1, stunlockCap));
-    SetConVarInt(cvCharger, Clamp(RoundToCeil(BASE_CHARGER_LIMIT * scale), 1, stunlockCap));
+    int smoker     = Clamp(RoundToCeil(BASE_SMOKER_LIMIT  * scale), 1, stunlockCap);
+    int hunter     = Clamp(RoundToCeil(BASE_HUNTER_LIMIT  * scale), 1, stunlockCap);
+    int jockey     = Clamp(RoundToCeil(BASE_JOCKEY_LIMIT  * scale), 1, stunlockCap);
+    int charger    = Clamp(RoundToCeil(BASE_CHARGER_LIMIT * scale), 1, stunlockCap);
 
-    SetConVarInt(cvSpitter, RoundToCeil(BASE_SPITTER_LIMIT * scale));
-    SetConVarInt(cvBoomer,  RoundToCeil(BASE_BOOMER_LIMIT  * scale));
+    int spitter    = RoundToCeil(BASE_SPITTER_LIMIT * scale);
+    int boomer     = RoundToCeil(BASE_BOOMER_LIMIT * scale);
 
-    SetConVarInt(cvCommonLimit, RoundToCeil(BASE_COMMON_LIMIT * scale));
-    SetConVarInt(cvMobMin, RoundToCeil(BASE_MOB_MIN * scale));
-    SetConVarInt(cvMobMax, RoundToCeil(BASE_MOB_MAX * scale));
-    SetConVarInt(cvWanderers, RoundToCeil(BASE_WANDERERS * scale));
+    int commons    = RoundToCeil(BASE_COMMON_LIMIT * scale);
+    int mobMin     = RoundToCeil(BASE_MOB_MIN * scale);
+    int mobMax     = RoundToCeil(BASE_MOB_MAX * scale);
+    int wanderers  = RoundToCeil(BASE_WANDERERS * scale);
 
-    // Faster SI respawns with more survivors
     float respawn = BASE_SI_RESPAWN_TIME / scale;
     if (respawn < 5.0)
         respawn = 5.0;
 
-    SetConVarFloat(cvSIRespawn, respawn);
+    SetSMCvarInt("z_smoker_limit", smoker);
+    SetSMCvarInt("z_hunter_limit", hunter);
+    SetSMCvarInt("z_jockey_limit", jockey);
+    SetSMCvarInt("z_charger_limit", charger);
+
+    SetSMCvarInt("z_spitter_limit", spitter);
+    SetSMCvarInt("z_boomer_limit", boomer);
+
+    SetSMCvarInt("z_common_limit", commons);
+    SetSMCvarInt("z_mob_spawn_min_size", mobMin);
+    SetSMCvarInt("z_mob_spawn_max_size", mobMax);
+    SetSMCvarInt("z_reserved_wanderers", wanderers);
+
+    SetSMCvarFloat("z_special_spawn_interval", respawn);
+
+    PrintToServer(
+        "[Director Scaling] Survivors=%d Scale=%.2f | Smoker=%d Hunter=%d Jockey=%d Charger=%d Spitter=%d Boomer=%d | Commons=%d Mob=%d-%d Wanderers=%d Respawn=%.1f",
+        survivors,
+        scale,
+        smoker,
+        hunter,
+        jockey,
+        charger,
+        spitter,
+        boomer,
+        commons,
+        mobMin,
+        mobMax,
+        wanderers,
+        respawn
+    );
 }
 
 // =====================
-// Scaling math (FIXED)
+// sm_cvar wrappers
+// =====================
+
+void SetSMCvarInt(const char[] cvar, int value)
+{
+    ServerCommand("sm_cvar %s %d", cvar, value);
+}
+
+void SetSMCvarFloat(const char[] cvar, float value)
+{
+    ServerCommand("sm_cvar %s %.2f", cvar, value);
+}
+
+// =====================
+// Scaling math
 // =====================
 
 float GetScalingFactor(int survivors)
@@ -197,7 +216,6 @@ float GetScalingFactor(int survivors)
     int base = cvBaseSurvivors.IntValue;
     int max  = cvMaxScaleSurvivors.IntValue;
 
-    // Never scale BELOW base
     if (survivors <= base)
         return 1.0;
 
@@ -217,23 +235,30 @@ float GetScalingFactor(int survivors)
 int GetSurvivorCount()
 {
     int count = 0;
+
     for (int i = 1; i <= MaxClients; i++)
     {
-        // Includes humans and bots
         if (IsClientInGame(i) && GetClientTeam(i) == 2)
             count++;
     }
+
     return count;
 }
 
 bool IsValidClient(int client)
 {
-    return client > 0 && client <= MaxClients && IsClientInGame(client);
+    return client > 0
+        && client <= MaxClients
+        && IsClientInGame(client);
 }
 
 int Clamp(int value, int min, int max)
 {
-    if (value < min) return min;
-    if (value > max) return max;
+    if (value < min)
+        return min;
+
+    if (value > max)
+        return max;
+
     return value;
 }
