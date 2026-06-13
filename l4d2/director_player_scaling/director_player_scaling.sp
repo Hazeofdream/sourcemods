@@ -9,7 +9,7 @@ public Plugin myinfo =
     name        = "Director Player Scaling",
     author      = "Haze_of_dream",
     description = "Event-driven director and Tank HP scaling for high-player servers",
-    version     = "1.8"
+    version     = "1.9"
 };
 
 // =====================
@@ -23,7 +23,7 @@ public Plugin myinfo =
 #define BASE_SPITTER_LIMIT   1
 #define BASE_BOOMER_LIMIT    2
 
-#define BASE_COMMON_LIMIT    120
+#define BASE_COMMON_LIMIT    60
 #define BASE_MOB_MIN         20
 #define BASE_MOB_MAX         45
 #define BASE_WANDERERS       30
@@ -168,20 +168,20 @@ void ApplyDirectorScaling()
     if (respawn < 5.0)
         respawn = 5.0;
 
-    SetSMCvarInt("z_smoker_limit", smoker);
-    SetSMCvarInt("z_hunter_limit", hunter);
-    SetSMCvarInt("z_jockey_limit", jockey);
-    SetSMCvarInt("z_charger_limit", charger);
+    SetDirectorCvarInt("z_smoker_limit", smoker);
+    SetDirectorCvarInt("z_hunter_limit", hunter);
+    SetDirectorCvarInt("z_jockey_limit", jockey);
+    SetDirectorCvarInt("z_charger_limit", charger);
 
-    SetSMCvarInt("z_spitter_limit", spitter);
-    SetSMCvarInt("z_boomer_limit", boomer);
+    SetDirectorCvarInt("z_spitter_limit", spitter);
+    SetDirectorCvarInt("z_boomer_limit", boomer);
 
-    SetSMCvarInt("z_common_limit", commons);
-    SetSMCvarInt("z_mob_spawn_min_size", mobMin);
-    SetSMCvarInt("z_mob_spawn_max_size", mobMax);
-    SetSMCvarInt("z_reserved_wanderers", wanderers);
+    SetDirectorCvarInt("z_common_limit", commons);
+    SetDirectorCvarInt("z_mob_spawn_min_size", mobMin);
+    SetDirectorCvarInt("z_mob_spawn_max_size", mobMax);
+    SetDirectorCvarInt("z_reserved_wanderers", wanderers);
 
-    SetSMCvarFloat("z_special_spawn_interval", respawn);
+    SetDirectorCvarFloat("z_special_spawn_interval", respawn);
 
     PrintToServer(
         "[Director Scaling] Survivors=%d Scale=%.2f | Smoker=%d Hunter=%d Jockey=%d Charger=%d Spitter=%d Boomer=%d | Commons=%d Mob=%d-%d Wanderers=%d Respawn=%.1f",
@@ -202,17 +202,35 @@ void ApplyDirectorScaling()
 }
 
 // =====================
-// sm_cvar wrappers
+// Silent ConVar wrappers
 // =====================
 
-void SetSMCvarInt(const char[] cvar, int value)
+void SetDirectorCvarInt(const char[] name, int value)
 {
-    ServerCommand("sm_cvar %s %d", cvar, value);
+    ConVar cvar = FindConVar(name);
+
+    if (cvar == null)
+        return;
+
+    int flags = cvar.Flags;
+
+    cvar.Flags &= ~FCVAR_CHEAT;
+    cvar.IntValue = value;
+    cvar.Flags = flags;
 }
 
-void SetSMCvarFloat(const char[] cvar, float value)
+void SetDirectorCvarFloat(const char[] name, float value)
 {
-    ServerCommand("sm_cvar %s %.2f", cvar, value);
+    ConVar cvar = FindConVar(name);
+
+    if (cvar == null)
+        return;
+
+    int flags = cvar.Flags;
+
+    cvar.Flags &= ~FCVAR_CHEAT;
+    cvar.FloatValue = value;
+    cvar.Flags = flags;
 }
 
 // =====================
