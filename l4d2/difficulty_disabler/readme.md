@@ -1,0 +1,1 @@
+Disables votes being called to change difficulty.
