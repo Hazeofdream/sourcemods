@@ -25,7 +25,7 @@ public Plugin myinfo =
 
 #define BASE_COMMON_LIMIT    120
 #define BASE_MOB_MIN         20
-#define BASE_MOB_MAX         50
+#define BASE_MOB_MAX         45
 #define BASE_WANDERERS       30
 
 #define BASE_SI_RESPAWN_TIME 20.0
@@ -48,7 +48,7 @@ public void OnPluginStart()
 {
     cvBaseSurvivors = CreateConVar(
         "dps_base_survivor_count",
-        "4",
+        "1",
         "Survivor count base values are balanced for",
         FCVAR_NOTIFY,
         true, 1.0,
@@ -139,6 +139,14 @@ public void Event_TankSpawn(Event event, const char[] name, bool dontBroadcast)
 void ApplyDirectorScaling()
 {
     int survivors = GetSurvivorCount();
+
+    // Don't scale while teams are still initializing.
+    if (survivors <= 0)
+    {
+        PrintToServer("[Director Scaling] No survivors found, skipping update.");
+        return;
+    }
+
     float scale = GetScalingFactor(survivors);
 
     int stunlockCap = survivors;
