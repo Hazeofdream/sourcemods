@@ -160,14 +160,17 @@ void TryUseOwnUpgradePack(int client)
         RemovePlayerItem(client, pack);
         AcceptEntityInput(pack, "Kill");
 
-        PrintToChat(client,
-            "\x04[Shared Packs]\x01 Your upgrade pack has been depleted.");
+        PrintToChat(
+            client,
+            "\x04[Shared Packs]\x01 You used the last charge of your upgrade pack.");
     }
     else
     {
-        PrintToChat(client,
-            "\x04[Upgrade]\x01 Upgrade pack uses remaining: %d",
-            g_iPackUses[pack]);
+        PrintToChat(
+            client,
+            "\x04[Shared Packs]\x01 Upgrade pack uses remaining: %d",
+            g_iPackUses[pack]
+        );
     }
 
     PrintToChat(client,
@@ -235,6 +238,12 @@ void TryUseUpgradePack(int client)
             g_iPackUses[pack]
         );
     }
+
+    PrintToChat(client,
+        "\x04[Shared Packs]\x01 Received %s ammo from %N.",
+        explosive ? "explosive" : "incendiary",
+        target);
+}
 
 void InitializePackUses(int pack)
 {
