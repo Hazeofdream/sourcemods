@@ -19,6 +19,7 @@ bool g_bSelfUseTriggered[MAXPLAYERS + 1];
 
 ConVar g_hEnable;
 ConVar g_hUses;
+ConVar g_hHoldTime;
 
 int g_iPackUses[2049];
 
@@ -33,11 +34,18 @@ public void OnPluginStart()
         true, 1.0);
 
     g_hUses = CreateConVar(
-        "sm_sharepack_uses",
+        "sm_shared_pack_uses",
         "8",
         "Number of times an upgrade pack can be used before being consumed",
         FCVAR_NOTIFY,
         true, 1.0);
+
+    g_hHoldTime = CreateConVar(
+        "sm_shared_packs_hold_time",
+        "0.5",
+        "Length of hold required to use your own pack",
+        FCVAR_NOTIFY,
+        false, 0.1);
 
     AutoExecConfig(true, "shared_packs");
 }
@@ -107,7 +115,7 @@ void HandleSelfUse(int client, int buttons)
         return;
     }
 
-    if ((gameTime - g_fSelfUseStart[client]) < 1.0)
+    if ((gameTime - g_fSelfUseStart[client]) < g_hHoldTime.IntValue)
         return;
 
     g_bSelfUseTriggered[client] = true;
