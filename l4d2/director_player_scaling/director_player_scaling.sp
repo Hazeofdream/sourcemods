@@ -57,7 +57,7 @@ public void OnPluginStart()
 
     cvMaxScaleSurvivors = CreateConVar(
         "dps_max_scaled_survivors",
-        "281",
+        "28",
         "Maximum survivor count used for scaling",
         FCVAR_NOTIFY,
         true, 1.0,
