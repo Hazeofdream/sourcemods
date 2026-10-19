@@ -38,11 +38,11 @@ public void OnPluginStart()
 		SetFailState("This plugin only supports Left 4 Dead 2.");
 	}
 
-	g_cvEnabled = CreateConVar("parrythis_enable", "1",     "Enable Tank rock reflecting with melee weapons (1 = on, 0 = off)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
-	g_cvDamage  = CreateConVar("parrythis_damage", "300.0", "Damage a reflected rock deals to the infected it hits", FCVAR_NOTIFY, true, 0.0);
+	g_cvEnabled = CreateConVar("parrythis_enable", "1",     "Enable Tank rock reflecting with melee weapons", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+	g_cvDamage  = CreateConVar("parrythis_damage", "15000.0", "Damage a reflected rock deals to the infected it hits", FCVAR_NOTIFY, true, 0.0);
 	g_cvHitbox  = CreateConVar("parrythis_hitbox", "80.0",  "Radius (in units) around a reflected rock that counts as hitting an infected", FCVAR_NOTIFY, true, 1.0);
-	g_cvNoShake = CreateConVar("parrythis_noshake", "1",    "Block screen shake on the player who just reflected a rock (1 = on, 0 = off)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
-	g_cvDebug   = CreateConVar("parrythis_debug",  "0",     "Print reflect debug info to the swinging player's chat (1 = on)", FCVAR_NONE, true, 0.0, true, 1.0);
+	g_cvNoShake = CreateConVar("parrythis_noshake", "1",    "Block screen shake on the player who just reflected a rock", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+	g_cvDebug   = CreateConVar("parrythis_debug",  "0",     "Print reflect debug info to the swinging player's chat", FCVAR_NONE, true, 0.0, true, 1.0);
 
 	g_hRocks = new ArrayList(2);
 
