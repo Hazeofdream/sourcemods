@@ -4,16 +4,21 @@
 #include <sourcemod>
 #include <sdktools>
 
+// m_iClip1 holds PACK_MARK + remaining uses. The offset makes sure a default
+// clip value (-1, 0, 1...) is never mistaken for a stored count.
+#define PACK_MARK     100
+// Stays small in case m_iClip1 is a narrow (8 bit) netprop.
+#define MAX_PACK_USES 25
+
 public Plugin myinfo =
 {
     name = "Shared Packs",
     author = "Haze_of_dream",
     description = "Allows survivors to share or use upgrade packs with limited uses",
-    version = "1.0"
+    version = "1.1"
 };
 
 bool g_bUseHeld[MAXPLAYERS + 1];
-
 float g_fSelfUseStart[MAXPLAYERS + 1];
 bool g_bSelfUseTriggered[MAXPLAYERS + 1];
 
@@ -21,7 +26,8 @@ ConVar g_hEnable;
 ConVar g_hUses;
 ConVar g_hHoldTime;
 
-int g_iPackUses[2049];
+// Only used if the pack entity has no m_iClip1 netprop
+int g_iFallbackUses[2049];
 
 public void OnPluginStart()
 {
@@ -36,16 +42,17 @@ public void OnPluginStart()
     g_hUses = CreateConVar(
         "sm_shared_pack_uses",
         "8",
-        "Number of times an upgrade pack can be used before being consumed",
+        "Number of times an upgrade pack can be used before being consumed (max 25)",
         FCVAR_NOTIFY,
-        true, 1.0);
+        true, 1.0,
+        true, float(MAX_PACK_USES));
 
     g_hHoldTime = CreateConVar(
         "sm_shared_packs_hold_time",
         "0.5",
-        "Length of hold required to use your own pack",
+        "Length of hold required to use your own pack, in seconds",
         FCVAR_NOTIFY,
-        false, 0.1);
+        true, 0.1);
 
     AutoExecConfig(true, "shared_packs");
 }
@@ -59,9 +66,9 @@ public void OnClientDisconnect(int client)
 
 public void OnEntityDestroyed(int entity)
 {
-    if (entity > 0 && entity < sizeof(g_iPackUses))
+    if (entity > 0 && entity < sizeof(g_iFallbackUses))
     {
-        g_iPackUses[entity] = 0;
+        g_iFallbackUses[entity] = 0;
     }
 }
 
@@ -115,67 +122,17 @@ void HandleSelfUse(int client, int buttons)
         return;
     }
 
-    if ((gameTime - g_fSelfUseStart[client]) < g_hHoldTime.IntValue)
+    // FloatValue: IntValue truncated 0.5 to 0 and removed the hold requirement
+    if ((gameTime - g_fSelfUseStart[client]) < g_hHoldTime.FloatValue)
         return;
 
     g_bSelfUseTriggered[client] = true;
-
     TryUseOwnUpgradePack(client);
 }
 
 void TryUseOwnUpgradePack(int client)
 {
-    int pack = FindPlayerUpgradePack(client);
-
-    if (pack == -1)
-        return;
-
-    InitializePackUses(pack);
-
-    char classname[64];
-    GetEntityClassname(pack, classname, sizeof(classname));
-
-    bool explosive = StrEqual(classname, "weapon_upgradepack_explosive");
-
-    if (explosive && HasGrenadeLauncher(client))
-    {
-        PrintToChat(client,
-            "\x04[Shared Packs]\x01 Explosive ammo cannot be applied to a grenade launcher.");
-        return;
-    }
-
-    if (HasUpgradeAmmo(client))
-    {
-        PrintToChat(client,
-            "\x04[Shared Packs]\x01 You already have upgraded ammo loaded.");
-        return;
-    }
-
-    GivePlayerUpgrade(client, explosive);
-
-    g_iPackUses[pack]--;
-
-    if (g_iPackUses[pack] <= 0)
-    {
-        RemovePlayerItem(client, pack);
-        AcceptEntityInput(pack, "Kill");
-
-        PrintToChat(
-            client,
-            "\x04[Shared Packs]\x01 You used the last charge of your upgrade pack.");
-    }
-    else
-    {
-        PrintToChat(
-            client,
-            "\x04[Shared Packs]\x01 Upgrade pack uses remaining: %d",
-            g_iPackUses[pack]
-        );
-    }
-
-    PrintToChat(client,
-        "\x04[Upgrade]\x01 Applied %s ammo to yourself.",
-        explosive ? "explosive" : "incendiary");
+    UsePack(client, client);
 }
 
 void TryUseUpgradePack(int client)
@@ -188,77 +145,148 @@ void TryUseUpgradePack(int client)
     if (target == client)
         return;
 
-    int pack = FindPlayerUpgradePack(target);
+    UsePack(client, target);
+}
+
+/**
+ * Applies one charge of owner's pack to user.
+ * owner == user for self use.
+ */
+void UsePack(int user, int owner)
+{
+    int pack = FindPlayerUpgradePack(owner);
 
     if (pack == -1)
         return;
 
-    InitializePackUses(pack);
-
     char classname[64];
     GetEntityClassname(pack, classname, sizeof(classname));
-
     bool explosive = StrEqual(classname, "weapon_upgradepack_explosive");
 
-    if (explosive && HasGrenadeLauncher(client))
+    if (explosive && HasGrenadeLauncher(user))
     {
-        PrintToChat(client,
+        PrintToChat(user,
             "\x04[Shared Packs]\x01 Explosive ammo cannot be applied to a grenade launcher.");
         return;
     }
 
-    if (HasUpgradeAmmo(client))
+    if (HasUpgradeAmmo(user))
     {
-        PrintToChat(client,
+        PrintToChat(user,
             "\x04[Shared Packs]\x01 You already have upgraded ammo loaded.");
         return;
     }
 
-    GivePlayerUpgrade(client, explosive);
+    int remaining = GetOrInitPackUses(pack) - 1;
 
-    g_iPackUses[pack]--;
+    GivePlayerUpgrade(user, explosive);
 
-    if (g_iPackUses[pack] <= 0)
+    if (remaining <= 0)
     {
-        RemovePlayerItem(target, pack);
+        RemovePlayerItem(owner, pack);
         AcceptEntityInput(pack, "Kill");
-
-        PrintToChat(
-            target,
-            "\x04[Shared Packs]\x01 %N used the last charge of your upgrade pack.",
-            client
-        );
     }
     else
     {
-        PrintToChat(
-            target,
-            "\x04[Shared Packs]\x01 %N used your upgrade pack. Uses remaining: %d",
-            client,
-            g_iPackUses[pack]
-        );
+        SetPackUses(pack, remaining);
     }
 
-    PrintToChat(client,
-        "\x04[Shared Packs]\x01 Received %s ammo from %N.",
-        explosive ? "explosive" : "incendiary",
-        target);
-}
-
-void InitializePackUses(int pack)
-{
-    if (pack <= MaxClients || !IsValidEntity(pack))
-        return;
-
-    if (g_iPackUses[pack] <= 0)
+    if (owner == user)
     {
-        g_iPackUses[pack] = g_hUses.IntValue;
+        if (remaining <= 0)
+        {
+            PrintToChat(user,
+                "\x04[Shared Packs]\x01 You used the last charge of your upgrade pack.");
+        }
+        else
+        {
+            PrintToChat(user,
+                "\x04[Shared Packs]\x01 Upgrade pack uses remaining: %d",
+                remaining);
+        }
+
+        PrintToChat(user,
+            "\x04[Upgrade]\x01 Applied %s ammo to yourself.",
+            explosive ? "explosive" : "incendiary");
+    }
+    else
+    {
+        if (remaining <= 0)
+        {
+            PrintToChat(owner,
+                "\x04[Shared Packs]\x01 %N used the last charge of your upgrade pack.",
+                user);
+        }
+        else
+        {
+            PrintToChat(owner,
+                "\x04[Shared Packs]\x01 %N used your upgrade pack. Uses remaining: %d",
+                user,
+                remaining);
+        }
+
+        PrintToChat(user,
+            "\x04[Shared Packs]\x01 Received %s ammo from %N.",
+            explosive ? "explosive" : "incendiary",
+            owner);
     }
 }
 
+/*=====[ PACK USE STORAGE ]=====*/
+
+// Returns the stored number of remaining uses, or 0 if this pack has none
+// stored yet (a fresh pack).
+int GetPackUses(int pack)
+{
+    if (HasEntProp(pack, Prop_Send, "m_iClip1"))
+    {
+        int raw = GetEntProp(pack, Prop_Send, "m_iClip1");
+
+        if (raw > PACK_MARK && raw <= PACK_MARK + MAX_PACK_USES)
+            return raw - PACK_MARK;
+
+        return 0;
+    }
+
+    if (pack > 0 && pack < sizeof(g_iFallbackUses))
+        return g_iFallbackUses[pack];
+
+    return 0;
+}
+
+void SetPackUses(int pack, int uses)
+{
+    if (HasEntProp(pack, Prop_Send, "m_iClip1"))
+    {
+        SetEntProp(pack, Prop_Send, "m_iClip1", PACK_MARK + uses);
+    }
+    else if (pack > 0 && pack < sizeof(g_iFallbackUses))
+    {
+        g_iFallbackUses[pack] = uses;
+    }
+}
+
+int GetOrInitPackUses(int pack)
+{
+    int uses = GetPackUses(pack);
+
+    if (uses <= 0)
+    {
+        uses = g_hUses.IntValue;
+        SetPackUses(pack, uses);
+    }
+
+    return uses;
+}
+
+/*=====[ HELPERS ]=====*/
+
+// Finds the pack the client is currently carrying in hand. With Multiple
+// Equipment, a pack stashed as the 2nd item of the slot is not an entity until
+// it is swapped into hand, so it can only be shared after the owner swaps to it.
 int FindPlayerUpgradePack(int client)
 {
-    for (int slot = 0; slot < 6; slot++)
+    for (int slot = 0; slot < 5; slot++)
     {
         int weapon = GetPlayerWeaponSlot(client, slot);
 
@@ -307,7 +335,6 @@ bool HasGrenadeLauncher(int client)
 void GivePlayerUpgrade(int client, bool explosive)
 {
     int flags = GetCommandFlags("upgrade_add");
-
     SetCommandFlags("upgrade_add", flags & ~FCVAR_CHEAT);
 
     if (explosive)
