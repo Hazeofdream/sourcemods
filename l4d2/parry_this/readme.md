@@ -1,6 +1,5 @@
 
-Hitting a Tank rock with a melee weapon spawns a new rock at the same spot,
-owned by the survivor, travelling back along the original rock's reversed
+Hitting a Tank rock with a melee weapon reflects the rock back, accounts for proper ownership & angles
 velocity.
  
 Requires: left4dhooks
