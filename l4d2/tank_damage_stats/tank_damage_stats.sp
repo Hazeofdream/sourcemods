@@ -26,11 +26,11 @@ public Plugin myinfo =
 // Data
 // =======================
 
-int  g_TankEnt[MAX_TRACKED_TANKS];
-int  g_TankSpawnHP[MAX_TRACKED_TANKS];
-int  g_TankCount;
+int g_TankEnt[MAX_TRACKED_TANKS];
+int g_TankSpawnHP[MAX_TRACKED_TANKS];
+int g_TankCount;
 
-int  g_TankDamage[MAX_TRACKED_TANKS][MAXPLAYERS + 1];
+int g_TankDamage[MAX_TRACKED_TANKS][MAXPLAYERS + 1];
 int g_SortTankId = -1;
 char g_PlayerName[MAXPLAYERS + 1][MAX_NAME_LENGTH];
 
@@ -264,7 +264,14 @@ public int SortByDamageDesc(int a, int b, ArrayList list, Handle hndl)
 {
     int dmgA = g_TankDamage[g_SortTankId][a];
     int dmgB = g_TankDamage[g_SortTankId][b];
-    return dmgB - dmgA;
+
+    if (dmgA > dmgB)
+        return -1;
+
+    if (dmgA < dmgB)
+        return 1;
+
+    return 0;
 }
 
 // =======================
