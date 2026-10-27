@@ -13,7 +13,7 @@ public Plugin myinfo =
     name        = "Tank Damage Stats",
     author      = "Haze_of_dream",
     description = "Tracks and prints per-player damage dealt to each Tank",
-    version     = "1.2"
+    version     = "1.3"
 };
 
 // =======================
@@ -56,6 +56,49 @@ public void OnPluginStart()
     HookEvent("player_hurt",   Event_PlayerHurt,   EventHookMode_Post);
     HookEvent("infected_hurt", Event_InfectedHurt, EventHookMode_Post);
     HookEvent("entity_killed", Event_EntityKilled, EventHookMode_Post);
+    HookEvent("player_bot_replace", Event_PlayerBotReplace, EventHookMode_Post);
+    HookEvent("bot_player_replace", Event_BotPlayerReplace, EventHookMode_Post);
+    HookEvent("round_start",   Event_RoundStart,   EventHookMode_PostNoCopy);
+}
+
+// A new client in a reused slot must not inherit the previous occupant's damage.
+public void OnClientPutInServer(int client)
+{
+    for (int id = 0; id < g_TankCount; id++)
+        g_TankDamage[id][client] = 0;
+}
+
+// =======================
+// Bot Takeover
+// =======================
+
+// Damage follows the survivor when a human and a bot swap control
+// (idle, disconnect, or taking a bot back over).
+void TransferDamage(int from, int to)
+{
+    if (from <= 0 || from > MaxClients || to <= 0 || to > MaxClients || from == to)
+        return;
+
+    for (int id = 0; id < g_TankCount; id++)
+    {
+        g_TankDamage[id][to] += g_TankDamage[id][from];
+        g_TankDamage[id][from] = 0;
+    }
+}
+
+public void Event_PlayerBotReplace(Event event, const char[] name, bool dontBroadcast)
+{
+    TransferDamage(GetClientOfUserId(event.GetInt("player")), GetClientOfUserId(event.GetInt("bot")));
+}
+
+public void Event_BotPlayerReplace(Event event, const char[] name, bool dontBroadcast)
+{
+    TransferDamage(GetClientOfUserId(event.GetInt("bot")), GetClientOfUserId(event.GetInt("player")));
+}
+
+public void Event_RoundStart(Event event, const char[] name, bool dontBroadcast)
+{
+    g_TankCount = 0;
 }
 
 // =======================
@@ -85,7 +128,8 @@ int FindOrCreateTank(int ent)
     int id = g_TankCount;
 
     g_TankEnt[id]      = ent;
-    g_TankSpawnHP[id]  = GetEntProp(ent, Prop_Data, "m_iHealth");
+    // Max health: by the time the first hit is reported, m_iHealth is already reduced.
+    g_TankSpawnHP[id]  = GetEntProp(ent, Prop_Data, "m_iMaxHealth");
 
     for (int i = 1; i <= MaxClients; i++)
         g_TankDamage[id][i] = 0;
@@ -197,13 +241,16 @@ void PrintTankStats(int id)
     ArrayList players = new ArrayList();
     int totalDamage = 0;
 
-    // Collect all survivors (including 0-damage)
+    // Collect all survivors, humans and bots (including 0-damage), plus anyone
+    // who dealt damage but has since left the survivor team.
     for (int i = 1; i <= MaxClients; i++)
     {
-        if (!IsClientInGame(i))
-            continue;
+        bool inGame = IsClientInGame(i);
 
-        if (GetClientTeam(i) != 2)
+        if (inGame)
+            GetClientName(i, g_PlayerName[i], sizeof(g_PlayerName[]));
+
+        if (g_TankDamage[id][i] <= 0 && (!inGame || GetClientTeam(i) != 2))
             continue;
 
         players.Push(i);
@@ -260,10 +307,13 @@ void PrintTankStats(int id)
 // Sorting
 // =======================
 
-public int SortByDamageDesc(int a, int b, ArrayList list, Handle hndl)
+// a / b are array positions, not the stored client indexes.
+public int SortByDamageDesc(int a, int b, Handle array, Handle hndl)
 {
-    int dmgA = g_TankDamage[g_SortTankId][a];
-    int dmgB = g_TankDamage[g_SortTankId][b];
+    ArrayList list = view_as<ArrayList>(array);
+
+    int dmgA = g_TankDamage[g_SortTankId][list.Get(a)];
+    int dmgB = g_TankDamage[g_SortTankId][list.Get(b)];
 
     if (dmgA > dmgB)
         return -1;
