@@ -21,14 +21,14 @@ public Plugin myinfo =
 #define BASE_JOCKEY_LIMIT    1
 #define BASE_CHARGER_LIMIT   1
 #define BASE_SPITTER_LIMIT   1
-#define BASE_BOOMER_LIMIT    2
+#define BASE_BOOMER_LIMIT    1
 
-#define BASE_COMMON_LIMIT    40
-#define BASE_MOB_MIN         15
-#define BASE_MOB_MAX         30
-#define BASE_WANDERERS       15
+#define BASE_COMMON_LIMIT    30
+#define BASE_MOB_MIN         10
+#define BASE_MOB_MAX         25
+#define BASE_WANDERERS       10
 
-#define BASE_SI_RESPAWN_TIME 40.0
+#define BASE_SI_RESPAWN_TIME 60.0
 
 #define TEAM_SPECTATOR       1
 #define TEAM_SURVIVOR        2
@@ -44,6 +44,7 @@ public Plugin myinfo =
 ConVar cvBaseSurvivors;
 ConVar cvMaxScaleSurvivors;
 ConVar cvScaleIntensity;
+ConVar cvMinScale;
 ConVar cvBaseTankHealth;
 
 Handle g_hRescaleTimer = null;
@@ -81,6 +82,15 @@ public void OnPluginStart()
         true, 3.0
     );
 
+    cvMinScale = CreateConVar(
+        "dps_min_scale",
+        "0.25",
+        "Lowest scale used when fewer humans than dps_base_survivor_count are playing",
+        FCVAR_NOTIFY,
+        true, 0.05,
+        true, 1.0
+    );
+
     cvBaseTankHealth = CreateConVar(
         "dps_base_tank_health",
         "7000",
@@ -94,6 +104,7 @@ public void OnPluginStart()
     cvBaseSurvivors.AddChangeHook(OnScalingCvarChanged);
     cvMaxScaleSurvivors.AddChangeHook(OnScalingCvarChanged);
     cvScaleIntensity.AddChangeHook(OnScalingCvarChanged);
+    cvMinScale.AddChangeHook(OnScalingCvarChanged);
     cvBaseTankHealth.AddChangeHook(OnScalingCvarChanged);
 
     HookEvent("player_team", Event_Rescale, EventHookMode_PostNoCopy);
@@ -261,13 +272,12 @@ void SetDirectorCvarFloat(const char[] name, float value)
 // Scaling math
 // =====================
 
+// Base values are balanced for dps_base_survivor_count humans: fewer humans scale them down
+// (never below dps_min_scale), more humans scale them up (capped at dps_max_scaled_survivors).
 float GetScalingFactor(int survivors)
 {
     int base = cvBaseSurvivors.IntValue;
     int max  = cvMaxScaleSurvivors.IntValue;
-
-    if (survivors <= base)
-        return 1.0;
 
     if (survivors > max)
         survivors = max;
@@ -275,7 +285,13 @@ float GetScalingFactor(int survivors)
     float rawScale = float(survivors) / float(base);
     float intensity = cvScaleIntensity.FloatValue;
 
-    return 1.0 + ((rawScale - 1.0) * intensity);
+    float scale = 1.0 + ((rawScale - 1.0) * intensity);
+
+    float minScale = cvMinScale.FloatValue;
+    if (scale < minScale)
+        scale = minScale;
+
+    return scale;
 }
 
 // =====================
