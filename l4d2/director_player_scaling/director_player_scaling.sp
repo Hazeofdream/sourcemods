@@ -9,7 +9,7 @@ public Plugin myinfo =
     name        = "Director Player Scaling",
     author      = "Haze_of_dream",
     description = "Event-driven director and Tank HP scaling for high-player servers",
-    version     = "1.9"
+    version     = "2.0"
 };
 
 // =====================
@@ -23,12 +23,19 @@ public Plugin myinfo =
 #define BASE_SPITTER_LIMIT   1
 #define BASE_BOOMER_LIMIT    2
 
-#define BASE_COMMON_LIMIT    60
-#define BASE_MOB_MIN         20
-#define BASE_MOB_MAX         45
-#define BASE_WANDERERS       30
+#define BASE_COMMON_LIMIT    40
+#define BASE_MOB_MIN         15
+#define BASE_MOB_MAX         30
+#define BASE_WANDERERS       15
 
-#define BASE_SI_RESPAWN_TIME 20.0
+#define BASE_SI_RESPAWN_TIME 40.0
+
+#define TEAM_SPECTATOR       1
+#define TEAM_SURVIVOR        2
+
+// Delay before recounting, so team changes / disconnects have fully applied
+// and bursts of events collapse into a single update.
+#define RESCALE_DELAY        0.5
 
 // =====================
 // ConVars
@@ -37,8 +44,9 @@ public Plugin myinfo =
 ConVar cvBaseSurvivors;
 ConVar cvMaxScaleSurvivors;
 ConVar cvScaleIntensity;
+ConVar cvBaseTankHealth;
 
-ConVar cvTankHealth;
+Handle g_hRescaleTimer = null;
 
 // =====================
 // Plugin start
@@ -49,7 +57,7 @@ public void OnPluginStart()
     cvBaseSurvivors = CreateConVar(
         "dps_base_survivor_count",
         "1",
-        "Survivor count base values are balanced for",
+        "Human survivor count base values are balanced for",
         FCVAR_NOTIFY,
         true, 1.0,
         true, 10.0
@@ -57,8 +65,8 @@ public void OnPluginStart()
 
     cvMaxScaleSurvivors = CreateConVar(
         "dps_max_scaled_survivors",
-        "28",
-        "Maximum survivor count used for scaling",
+        "8",
+        "Maximum human survivor count used for scaling",
         FCVAR_NOTIFY,
         true, 1.0,
         true, 31.0
@@ -73,63 +81,72 @@ public void OnPluginStart()
         true, 3.0
     );
 
+    cvBaseTankHealth = CreateConVar(
+        "dps_base_tank_health",
+        "7000",
+        "Unscaled z_tank_health (game difficulty multiplier is applied on top)",
+        FCVAR_NOTIFY,
+        true, 1.0
+    );
+
     AutoExecConfig(true, "director_player_scaling");
 
-    cvTankHealth = FindConVar("z_tank_health");
+    cvBaseSurvivors.AddChangeHook(OnScalingCvarChanged);
+    cvMaxScaleSurvivors.AddChangeHook(OnScalingCvarChanged);
+    cvScaleIntensity.AddChangeHook(OnScalingCvarChanged);
+    cvBaseTankHealth.AddChangeHook(OnScalingCvarChanged);
 
-    HookEvent("player_team", Event_PlayerTeam, EventHookMode_Post);
-    HookEvent("player_disconnect", Event_PlayerDisconnect, EventHookMode_Post);
-    HookEvent("bot_player_replace", Event_PlayerSwap, EventHookMode_Post);
-    HookEvent("player_bot_replace", Event_PlayerSwap, EventHookMode_Post);
-
-    HookEvent("tank_spawn", Event_TankSpawn, EventHookMode_Post);
+    HookEvent("player_team", Event_Rescale, EventHookMode_PostNoCopy);
+    HookEvent("bot_player_replace", Event_Rescale, EventHookMode_PostNoCopy);
+    HookEvent("player_bot_replace", Event_Rescale, EventHookMode_PostNoCopy);
+    HookEvent("round_start", Event_Rescale, EventHookMode_PostNoCopy);
 
     ApplyDirectorScaling();
+}
+
+public void OnConfigsExecuted()
+{
+    ApplyDirectorScaling();
+}
+
+public void OnMapEnd()
+{
+    // Timer is created with TIMER_FLAG_NO_MAPCHANGE and is killed on map change.
+    g_hRescaleTimer = null;
+}
+
+public void OnClientDisconnect_Post(int client)
+{
+    QueueRescale();
 }
 
 // =====================
 // Event handlers
 // =====================
 
-public void Event_PlayerTeam(Event event, const char[] name, bool dontBroadcast)
+public void Event_Rescale(Event event, const char[] name, bool dontBroadcast)
 {
-    ApplyDirectorScaling();
+    QueueRescale();
 }
 
-public void Event_PlayerDisconnect(Event event, const char[] name, bool dontBroadcast)
+public void OnScalingCvarChanged(ConVar convar, const char[] oldValue, const char[] newValue)
 {
-    ApplyDirectorScaling();
+    QueueRescale();
 }
 
-public void Event_PlayerSwap(Event event, const char[] name, bool dontBroadcast)
+void QueueRescale()
 {
-    ApplyDirectorScaling();
-}
-
-public void Event_TankSpawn(Event event, const char[] name, bool dontBroadcast)
-{
-    int tank = GetClientOfUserId(event.GetInt("userid"));
-    if (!IsValidClient(tank))
+    if (g_hRescaleTimer != null)
         return;
 
-    float baseHP = 4000.0;
+    g_hRescaleTimer = CreateTimer(RESCALE_DELAY, Timer_Rescale, _, TIMER_FLAG_NO_MAPCHANGE);
+}
 
-    if (cvTankHealth != null)
-        baseHP = float(cvTankHealth.IntValue);
-
-    float scale = GetScalingFactor(GetSurvivorCount());
-
-    int hp = RoundToNearest(baseHP * scale);
-
-    SetEntProp(tank, Prop_Data, "m_iHealth", hp);
-    SetEntProp(tank, Prop_Data, "m_iMaxHealth", hp);
-
-    PrintToServer(
-        "[Director Scaling] Tank spawned with %d HP (base %.0f, scale %.2f)",
-        hp,
-        baseHP,
-        scale
-    );
+public Action Timer_Rescale(Handle timer)
+{
+    g_hRescaleTimer = null;
+    ApplyDirectorScaling();
+    return Plugin_Stop;
 }
 
 // =====================
@@ -138,12 +155,12 @@ public void Event_TankSpawn(Event event, const char[] name, bool dontBroadcast)
 
 void ApplyDirectorScaling()
 {
-    int survivors = GetSurvivorCount();
+    int survivors = GetHumanSurvivorCount();
 
-    // Don't scale while teams are still initializing.
+    // Don't scale while no humans are on the survivor team yet.
     if (survivors <= 0)
     {
-        PrintToServer("[Director Scaling] No survivors found, skipping update.");
+        PrintToServer("[Director Scaling] No human survivors found, skipping update.");
         return;
     }
 
@@ -168,6 +185,10 @@ void ApplyDirectorScaling()
     if (respawn < 5.0)
         respawn = 5.0;
 
+    // Scaling the cvar (rather than the Tank entity) keeps the difficulty
+    // multiplier intact and avoids re-healing the Tank on control passes.
+    int tankHP = RoundToNearest(cvBaseTankHealth.FloatValue * scale);
+
     SetDirectorCvarInt("z_smoker_limit", smoker);
     SetDirectorCvarInt("z_hunter_limit", hunter);
     SetDirectorCvarInt("z_jockey_limit", jockey);
@@ -183,8 +204,10 @@ void ApplyDirectorScaling()
 
     SetDirectorCvarFloat("z_special_spawn_interval", respawn);
 
+    SetDirectorCvarInt("z_tank_health", tankHP);
+
     PrintToServer(
-        "[Director Scaling] Survivors=%d Scale=%.2f | Smoker=%d Hunter=%d Jockey=%d Charger=%d Spitter=%d Boomer=%d | Commons=%d Mob=%d-%d Wanderers=%d Respawn=%.1f",
+        "[Director Scaling] Humans=%d Scale=%.2f | Smoker=%d Hunter=%d Jockey=%d Charger=%d Spitter=%d Boomer=%d | Commons=%d Mob=%d-%d Wanderers=%d Respawn=%.1f | TankHP=%d",
         survivors,
         scale,
         smoker,
@@ -197,7 +220,8 @@ void ApplyDirectorScaling()
         mobMin,
         mobMax,
         wanderers,
-        respawn
+        respawn,
+        tankHP
     );
 }
 
@@ -258,17 +282,35 @@ float GetScalingFactor(int survivors)
 // Utilities
 // =====================
 
-int GetSurvivorCount()
+// Counts human survivors only. Idle humans (whose survivor is temporarily
+// bot-controlled) still count; plain filler bots do not.
+int GetHumanSurvivorCount()
 {
     int count = 0;
 
     for (int i = 1; i <= MaxClients; i++)
     {
-        if (IsClientInGame(i) && GetClientTeam(i) == 2)
+        if (!IsClientInGame(i) || GetClientTeam(i) != TEAM_SURVIVOR)
+            continue;
+
+        if (!IsFakeClient(i) || HasIdlePlayer(i))
             count++;
     }
 
     return count;
+}
+
+bool HasIdlePlayer(int bot)
+{
+    char netClass[16];
+    if (!GetEntityNetClass(bot, netClass, sizeof(netClass)) || !StrEqual(netClass, "SurvivorBot"))
+        return false;
+
+    int human = GetClientOfUserId(GetEntProp(bot, Prop_Send, "m_humanSpectatorUserID"));
+
+    return IsValidClient(human)
+        && !IsFakeClient(human)
+        && GetClientTeam(human) == TEAM_SPECTATOR;
 }
 
 bool IsValidClient(int client)
