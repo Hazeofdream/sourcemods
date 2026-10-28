@@ -10,6 +10,12 @@ automatically on a repeating interval or on demand with the `sm_discordstatus`
 admin command. After the first successful post, the plugin saves the Discord
 message ID and edits that same message for later updates.
 
+## Commands
+
+| Command | Access | Description |
+| --- | --- | --- |
+| `sm_discordstatus` | `ADMFLAG_GENERIC` | Posts the current server status to the configured webhook, or edits the saved status message. |
+
 ## ConVars
 
 | ConVar | Default | Description |
@@ -33,9 +39,11 @@ message ID and edits that same message for later updates.
    discord_server_status`.
 5. On first load, the plugin creates
    `left4dead2/cfg/sourcemod/discord_server_status.cfg`. Set
-   `sm_discordstatus_webhook` to a Discord webhook URL in that file, then
-   reload the plugin or restart the server to apply it.
+   `sm_discordstatus_webhook` to a Discord webhook URL in that file. Set any
+   other desired convars, then reload the plugin or restart the server to
+   apply the settings.
 
 The webhook URL is sensitive; keep the generated configuration private. If
 `sm_discordstatus_address` is left empty, the server must be able to reach
-ipify to look up its public IP. Otherwise, set the address manually.
+ipify (`api.ipify.org`) to look up its public IP. Otherwise, set the address
+manually.
