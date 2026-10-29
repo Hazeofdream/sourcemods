@@ -28,6 +28,7 @@ public Plugin myinfo =
 
 int g_TankEnt[MAX_TRACKED_TANKS];
 int g_TankSpawnHP[MAX_TRACKED_TANKS];
+int g_TankLastHP[MAX_TRACKED_TANKS];		// health after the last reported hit; only real health loss is credited
 int g_TankCount;
 
 int g_TankDamage[MAX_TRACKED_TANKS][MAXPLAYERS + 1];
@@ -54,7 +55,6 @@ public void OnPluginStart()
     AutoExecConfig(true, "tank_damage_stats");
 
     HookEvent("player_hurt",   Event_PlayerHurt,   EventHookMode_Post);
-    HookEvent("infected_hurt", Event_InfectedHurt, EventHookMode_Post);
     HookEvent("entity_killed", Event_EntityKilled, EventHookMode_Post);
     HookEvent("player_bot_replace", Event_PlayerBotReplace, EventHookMode_Post);
     HookEvent("bot_player_replace", Event_BotPlayerReplace, EventHookMode_Post);
@@ -114,7 +114,8 @@ bool IsTank(int client)
         && GetEntProp(client, Prop_Send, "m_zombieClass") == 8;
 }
 
-int FindOrCreateTank(int ent)
+// startHP: the Tank's health before the hit that made us start tracking it.
+int FindOrCreateTank(int ent, int startHP)
 {
     for (int i = 0; i < g_TankCount; i++)
     {
@@ -130,6 +131,7 @@ int FindOrCreateTank(int ent)
     g_TankEnt[id]      = ent;
     // Max health: by the time the first hit is reported, m_iHealth is already reduced.
     g_TankSpawnHP[id]  = GetEntProp(ent, Prop_Data, "m_iMaxHealth");
+    g_TankLastHP[id]   = (startHP < g_TankSpawnHP[id]) ? startHP : g_TankSpawnHP[id];
 
     for (int i = 1; i <= MaxClients; i++)
         g_TankDamage[id][i] = 0;
@@ -142,7 +144,7 @@ int FindOrCreateTank(int ent)
 // Damage Attribution
 // =======================
 
-void ApplyTankDamage(int tankEnt, int attacker, int dmg)
+void ApplyTankDamage(int id, int attacker, int dmg)
 {
     if (dmg <= 0)
         return;
@@ -154,10 +156,6 @@ void ApplyTankDamage(int tankEnt, int attacker, int dmg)
         return;
 
     if (GetClientTeam(attacker) != 2)
-        return;
-
-    int id = FindOrCreateTank(tankEnt);
-    if (id == -1)
         return;
 
     GetClientName(attacker, g_PlayerName[attacker], sizeof(g_PlayerName[]));
@@ -176,25 +174,23 @@ public void Event_PlayerHurt(Event event, const char[] name, bool dontBroadcast)
     if (!IsTank(victim))
         return;
 
-    ApplyTankDamage(victim, attacker, event.GetInt("dmg_health"));
-}
+    // dmg_health is the full damage of the hit, not what the Tank actually lost: the killing blow, hits during
+    // the death animation and burn ticks would all over-count. Credit the drop in health instead.
+    int health = event.GetInt("health");
+    if (health < 0 || GetEntProp(victim, Prop_Send, "m_isIncapacitated") != 0)
+        health = 0;
 
-public void Event_InfectedHurt(Event event, const char[] name, bool dontBroadcast)
-{
-    int victim = event.GetInt("entityid");
-    if (!IsTank(victim))
+    int id = FindOrCreateTank(victim, health + event.GetInt("dmg_health"));
+    if (id == -1)
         return;
 
-    int inflictor = event.GetInt("attackerentid");
-    if (!IsValidEntity(inflictor))
-        return;
+    int dealt = g_TankLastHP[id] - health;
 
-    int owner = GetEntPropEnt(inflictor, Prop_Data, "m_hOwnerEntity");
+    // Track every change (fire, world, infected damage too) so the next survivor hit is measured correctly.
+    // A rise (health given back by another plugin) just becomes the new reference.
+    g_TankLastHP[id] = health;
 
-    if (owner <= 0 || owner > MaxClients || !IsClientInGame(owner))
-        return;
-
-    ApplyTankDamage(victim, owner, event.GetInt("amount"));
+    ApplyTankDamage(id, attacker, dealt);
 }
 
 public void Event_EntityKilled(Event event, const char[] name, bool dontBroadcast)
