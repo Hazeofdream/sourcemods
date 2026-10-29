@@ -9,7 +9,7 @@ public Plugin myinfo =
     name        = "Discord Server Status",
     author      = "Haze_of_dream",
     description = "Posts the server name, address, map and player scores to a Discord webhook as an embed.",
-    version     = "1.0",
+    version     = "1.1",
     url         = ""
 };
 
@@ -38,6 +38,7 @@ ConVar g_hMessageId;
 ConVar g_hHostname;
 ConVar g_hHostIp;
 ConVar g_hHostPort;
+ConVar g_hGameMode;
 
 Handle g_hTimer = null;
 
@@ -112,6 +113,7 @@ public void OnPluginStart()
     g_hHostname = FindConVar("hostname");
     g_hHostIp   = FindConVar("hostip");
     g_hHostPort = FindConVar("hostport");
+    g_hGameMode = FindConVar("mp_gamemode");
 
     g_hInterval.AddChangeHook(OnIntervalChanged);
 
@@ -415,10 +417,15 @@ int BuildPlayerList(char[] buffer, int maxlen)
     int total = 0;
     int humans = 0;
     bool bots = g_hIncludeBots.BoolValue;
+    bool infected = IsVersus();
 
     for (int i = 1; i <= MaxClients; i++)
     {
         if (!IsClientInGame(i) || IsClientSourceTV(i))
+            continue;
+
+        // Outside versus the infected team is only the AI director's special infected.
+        if (!infected && GetClientTeam(i) == TEAM_INFECTED)
             continue;
 
         bool fake = IsFakeClient(i);
@@ -522,6 +529,17 @@ char[] GetTeamLabel(int team)
 // =====================
 // Utilities
 // =====================
+
+// Versus-style game mode (versus, teamversus, mutations named e.g. "community_versus"), where players play infected.
+bool IsVersus()
+{
+    if (g_hGameMode == null)
+        return false;
+
+    char mode[64];
+    g_hGameMode.GetString(mode, sizeof(mode));
+    return StrContains(mode, "versus", false) != -1;
+}
 
 // Asks an external service which address the server's requests come from. Cached for the plugin's lifetime.
 void LookupPublicIp()
