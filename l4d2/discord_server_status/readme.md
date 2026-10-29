@@ -5,6 +5,8 @@ webhook as an embed. The embed includes the server name, address, current map,
 player count, and a player list grouped by team and sorted by score. Player
 names are escaped for Discord Markdown, and bots can optionally be included.
 
+![Discord server status embed](server-status-image.png)
+
 The plugin posts once after each map starts by default. It can also update
 automatically on a repeating interval or on demand with the `sm_discordstatus`
 admin command. After the first successful post, the plugin saves the Discord
