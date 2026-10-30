@@ -6,45 +6,63 @@
 #include <sdkhooks>
 #include <left4dhooks>
 
-#define MAX_EDICTS     2049
+#define MAX_EDICTS		2049
+#define TEAM_SURVIVOR	2
+#define TEAM_INFECTED	3
 
-ConVar g_cvEnabled;
-ConVar g_cvDamage;
-ConVar g_cvHitbox;
-ConVar g_cvNoShake;
-ConVar g_cvDebug;
+#define REFLECT_IMMUNE	0.5		// a fresh reflected rock ignores melee this long (the same swing can't send it back)
+#define SHAKE_BLOCK		0.75	// screen shake is blocked this long after a player reflects a rock
+#define KILL_FALLBACK	0.5		// a shattered rock that somehow survives is removed after this long
 
-ArrayList g_hRocks; // blocks of {entity ref, reflector userid} for live reflected rocks
-bool  g_bReflected[MAX_EDICTS];
-bool  g_bBreaking[MAX_EDICTS]; // reflected rock that has hit an infected and is being shattered
-bool  g_bSpent[MAX_EDICTS]; // original rock already reflected; ignore all further damage to it
-float g_fReflectTime[MAX_EDICTS]; // game time the rock was reflected
-float g_fLastReflect[MAXPLAYERS + 1]; // game time each player last reflected a rock
-int  g_iparrythisor[MAX_EDICTS]; // userid of the survivor who reflected it
+// Per-edict rock state
+enum
+{
+	Rock_None = 0,
+	Rock_Reflected,		// sent back by a survivor: hits infected, never survivors
+	Rock_Breaking,		// reflected rock that hit an infected and is being shattered (still harmless to survivors)
+	Rock_Spent			// original rock that was reflected: ignores all damage until removed
+}
+
+ConVar g_cvEnabled, g_cvDamage, g_cvHitbox, g_cvNoShake, g_cvDebug;
+bool  g_bEnabled, g_bNoShake, g_bDebug;
+float g_fDamage, g_fHitboxSqr;
+
+ArrayList g_hRocks;						// entity refs of rocks in Rock_Reflected state
+int   g_iState[MAX_EDICTS];
+int   g_iReflector[MAX_EDICTS];			// userid of the survivor who reflected the rock
+float g_fReflectTime[MAX_EDICTS];
+float g_fLastReflect[MAXPLAYERS + 1];
 
 public Plugin myinfo =
 {
 	name        = "Parry This",
 	author      = "Haze_of_dream",
 	description = "Reflect Tank rocks back with melee weapons",
-	version     = "1.0",
+	version     = "1.1",
 	url         = ""
 };
 
 public void OnPluginStart()
 {
 	if (GetEngineVersion() != Engine_Left4Dead2)
-	{
 		SetFailState("This plugin only supports Left 4 Dead 2.");
-	}
 
-	g_cvEnabled = CreateConVar("parrythis_enable", "1",     "Enable Tank rock reflecting with melee weapons", FCVAR_NOTIFY, true, 0.0, true, 1.0);
-	g_cvDamage  = CreateConVar("parrythis_damage", "15000.0", "Damage a reflected rock deals to the infected it hits", FCVAR_NOTIFY, true, 0.0);
-	g_cvHitbox  = CreateConVar("parrythis_hitbox", "80.0",  "Radius (in units) around a reflected rock that counts as hitting an infected", FCVAR_NOTIFY, true, 1.0);
-	g_cvNoShake = CreateConVar("parrythis_noshake", "1",    "Block screen shake on the player who just reflected a rock", FCVAR_NOTIFY, true, 0.0, true, 1.0);
-	g_cvDebug   = CreateConVar("parrythis_debug",  "0",     "Print reflect debug info to the swinging player's chat", FCVAR_NONE, true, 0.0, true, 1.0);
+	g_cvEnabled = CreateConVar("parrythis_enable",  "1",       "Enable Tank rock reflecting with melee weapons", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+	g_cvDamage  = CreateConVar("parrythis_damage",  "15000.0", "Damage a reflected rock deals to the infected it hits", FCVAR_NOTIFY, true, 0.0);
+	g_cvHitbox  = CreateConVar("parrythis_hitbox",  "80.0",    "Radius (in units) around a reflected rock that counts as hitting an infected", FCVAR_NOTIFY, true, 1.0);
+	g_cvNoShake = CreateConVar("parrythis_noshake", "1",       "Block screen shake on the player who just reflected a rock", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+	g_cvDebug   = CreateConVar("parrythis_debug",   "0",       "Print reflect debug info to the swinging player's chat", FCVAR_NONE, true, 0.0, true, 1.0);
 
-	g_hRocks = new ArrayList(2);
+	g_cvEnabled.AddChangeHook(OnCvarChanged);
+	g_cvDamage.AddChangeHook(OnCvarChanged);
+	g_cvHitbox.AddChangeHook(OnCvarChanged);
+	g_cvNoShake.AddChangeHook(OnCvarChanged);
+	g_cvDebug.AddChangeHook(OnCvarChanged);
+
+	AutoExecConfig(true, "parrythis");
+	ReadCvars();
+
+	g_hRocks = new ArrayList();
 
 	UserMsg shakeMsg = GetUserMessageId("Shake");
 	if (shakeMsg != INVALID_MESSAGE_ID)
@@ -52,29 +70,52 @@ public void OnPluginStart()
 	else
 		LogError("Could not find the Shake user message; parrythis_noshake will have no effect.");
 
+	// Late load
 	for (int i = 1; i <= MaxClients; i++)
 	{
 		if (IsClientInGame(i))
-			SDKHook(i, SDKHook_OnTakeDamage, Client_OnTakeDamage);
+			OnClientPutInServer(i);
 	}
 
-	AutoExecConfig(true, "parrythis");
+	int rock = -1;
+	while ((rock = FindEntityByClassname(rock, "tank_rock")) != -1)
+		SDKHook(rock, SDKHook_OnTakeDamage, Rock_OnTakeDamage);
+}
+
+public void OnConfigsExecuted()
+{
+	ReadCvars();
+}
+
+void OnCvarChanged(ConVar convar, const char[] oldValue, const char[] newValue)
+{
+	ReadCvars();
+}
+
+void ReadCvars()
+{
+	g_bEnabled = g_cvEnabled.BoolValue;
+	g_fDamage  = g_cvDamage.FloatValue;
+	g_bNoShake = g_cvNoShake.BoolValue;
+	g_bDebug   = g_cvDebug.BoolValue;
+
+	float r = g_cvHitbox.FloatValue;
+	g_fHitboxSqr = r * r;
 }
 
 // Suppress screen shake for anyone who reflected a rock in the last moment.
-public Action Hook_Shake(UserMsg msg_id, BfRead msg, const int[] players, int playersNum, bool reliable, bool init)
+Action Hook_Shake(UserMsg msg_id, BfRead msg, const int[] players, int playersNum, bool reliable, bool init)
 {
-	if (!g_cvNoShake.BoolValue)
+	if (!g_bNoShake)
 		return Plugin_Continue;
 
 	float now = GetGameTime();
 	for (int i = 0; i < playersNum; i++)
 	{
 		int client = players[i];
-		if (client >= 1 && client <= MaxClients && (now - g_fLastReflect[client]) < 0.75)
+		if (client >= 1 && client <= MaxClients && now - g_fLastReflect[client] < SHAKE_BLOCK)
 			return Plugin_Handled;
 	}
-
 	return Plugin_Continue;
 }
 
@@ -84,136 +125,122 @@ public void OnClientPutInServer(int client)
 	SDKHook(client, SDKHook_OnTakeDamage, Client_OnTakeDamage);
 }
 
-// A reflected rock must never hurt a survivor, including the one who reflected it.
-public Action Client_OnTakeDamage(int victim, int &attacker, int &inflictor, float &damage, int &damagetype)
+bool IsReflected(int rock)
 {
-	if (inflictor > MaxClients && inflictor < MAX_EDICTS && g_bReflected[inflictor]
-		&& IsClientInGame(victim) && GetClientTeam(victim) == 2)
-	{
-		return Plugin_Handled;
-	}
+	return rock > MaxClients && rock < MAX_EDICTS && (g_iState[rock] == Rock_Reflected || g_iState[rock] == Rock_Breaking);
+}
 
+// A reflected rock must never hurt a survivor, including the one who reflected it.
+Action Client_OnTakeDamage(int victim, int &attacker, int &inflictor, float &damage, int &damagetype)
+{
+	if (IsReflected(inflictor) && GetClientTeam(victim) == TEAM_SURVIVOR)
+		return Plugin_Handled;
 	return Plugin_Continue;
 }
 
 public void OnEntityCreated(int entity, const char[] classname)
 {
-	if (entity <= MaxClients || entity >= MAX_EDICTS)
-		return;
-
-	if (classname[0] != 't')
-		return;
-
-	if (StrEqual(classname, "tank_rock"))
+	if (entity > MaxClients && entity < MAX_EDICTS && classname[0] == 't' && StrEqual(classname, "tank_rock"))
 		SDKHook(entity, SDKHook_OnTakeDamage, Rock_OnTakeDamage);
 }
 
 public void OnEntityDestroyed(int entity)
 {
 	if (entity > MaxClients && entity < MAX_EDICTS)
-	{
-		g_bReflected[entity]     = false;
-		g_iparrythisor[entity] = 0;
-		g_fReflectTime[entity]   = 0.0;
-		g_bSpent[entity]         = false;
-		g_bBreaking[entity]      = false;
-	}
+		g_iState[entity] = Rock_None;
 }
 
 // ---------------------------------------------------------------------------
 // A melee weapon hit on a rock spawns a reflected rock with reversed velocity.
 // ---------------------------------------------------------------------------
-public Action Rock_OnTakeDamage(int rock, int &attacker, int &inflictor, float &damage, int &damagetype, int &weapon, float damageForce[3], float damagePosition[3])
+Action Rock_OnTakeDamage(int rock, int &attacker, int &inflictor, float &damage, int &damagetype, int &weapon, float damageForce[3], float damagePosition[3])
 {
-	if (!g_cvEnabled.BoolValue)
+	if (!g_bEnabled || rock >= MAX_EDICTS)
 		return Plugin_Continue;
 
-	// Our own shatter damage after a reflected rock hits an infected: let it through
-	if (rock < MAX_EDICTS && g_bBreaking[rock])
-		return Plugin_Continue;
+	switch (g_iState[rock])
+	{
+		// Our own shatter damage after a reflected rock hits an infected: let it through
+		case Rock_Breaking:  return Plugin_Continue;
+		// Already reflected: swallow extra damage so it can't spawn duplicates or break
+		case Rock_Spent:     return Plugin_Handled;
+		case Rock_Reflected:
+		{
+			if (GetGameTime() - g_fReflectTime[rock] < REFLECT_IMMUNE)
+				return Plugin_Handled;
+		}
+	}
 
-	// The original rock was already reflected this swing; swallow any extra
-	// damage events so it can't spawn duplicates or break.
-	if (rock < MAX_EDICTS && g_bSpent[rock])
-		return Plugin_Handled;
-
-	// A freshly reflected rock is immune to melee briefly, so the same swing
-	// can't hit it again and send it straight back.
-	if (rock < MAX_EDICTS && g_bReflected[rock] && (GetGameTime() - g_fReflectTime[rock]) < 0.5)
-		return Plugin_Handled;
-
-	if (attacker < 1 || attacker > MaxClients || !IsClientInGame(attacker) || GetClientTeam(attacker) != 2)
+	if (attacker < 1 || attacker > MaxClients || !IsClientInGame(attacker) || GetClientTeam(attacker) != TEAM_SURVIVOR)
 		return Plugin_Continue;
 
 	if (weapon <= MaxClients || !IsValidEntity(weapon))
 		return Plugin_Continue;
 
-	char weaponName[64];
-	GetEntityClassname(weapon, weaponName, sizeof(weaponName));
-	if (!StrEqual(weaponName, "weapon_melee"))
+	char cls[16];
+	GetEntityClassname(weapon, cls, sizeof(cls));
+	if (!StrEqual(cls, "weapon_melee"))
 		return Plugin_Continue;
 
-	float rockVelocity[3], rockOrigin[3];
-	GetEntPropVector(rock, Prop_Data, "m_vecVelocity", rockVelocity);
-	GetEntPropVector(rock, Prop_Data, "m_vecAbsOrigin", rockOrigin);
+	float vel[3], origin[3];
+	GetEntPropVector(rock, Prop_Data, "m_vecVelocity", vel);
+	GetEntPropVector(rock, Prop_Data, "m_vecAbsOrigin", origin);
 
 	// Ignore a rock that isn't moving (e.g. still held by the Tank)
-	if (GetVectorLength(rockVelocity) < 1.0)
+	if (GetVectorLength(vel, true) < 1.0)
 	{
 		Debug(attacker, "rock %d hit by melee but has no velocity, ignored", rock);
 		return Plugin_Continue;
 	}
 
-	rockVelocity[0] = -rockVelocity[0];
-	rockVelocity[1] = -rockVelocity[1];
-	rockVelocity[2] = -rockVelocity[2];
-
-	int projectile = L4D_TankRockPrj(attacker, rockOrigin, NULL_VECTOR);
-	if (projectile <= MaxClients || !IsValidEntity(projectile))
+	int projectile = L4D_TankRockPrj(attacker, origin, NULL_VECTOR);
+	if (projectile <= MaxClients || projectile >= MAX_EDICTS || !IsValidEntity(projectile))
 	{
 		Debug(attacker, "rock %d: failed to spawn the reflected rock", rock);
 		return Plugin_Continue;
 	}
 
-	TeleportEntity(projectile, rockOrigin, NULL_VECTOR, rockVelocity);
+	NegateVector(vel);
+	TeleportEntity(projectile, origin, NULL_VECTOR, vel);
 
-	if (projectile < MAX_EDICTS)
-	{
-		g_bReflected[projectile]     = true;
-		g_fReflectTime[projectile]   = GetGameTime();
-		g_fLastReflect[attacker]     = GetGameTime();
-		g_iparrythisor[projectile] = GetClientUserId(attacker);
-		SDKHook(projectile, SDKHook_Touch, Rock_Touch);
-		int idx = g_hRocks.Push(EntIndexToEntRef(projectile));
-		g_hRocks.Set(idx, GetClientUserId(attacker), 1);
-	}
+	float now = GetGameTime();
+	g_iState[projectile]       = Rock_Reflected;
+	g_fReflectTime[projectile] = now;
+	g_iReflector[projectile]   = GetClientUserId(attacker);
+	g_fLastReflect[attacker]   = now;
+	SDKHook(projectile, SDKHook_Touch, Rock_Touch);
+	g_hRocks.Push(EntIndexToEntRef(projectile));
 
 	Debug(attacker, "rock %d REFLECTED as rock %d", rock, projectile);
 
-	// Retire the original right away: mark it spent and hide it, then remove it next frame
-	if (rock < MAX_EDICTS)
-		g_bSpent[rock] = true;
-
-	// Hide it and park it far away so any break effect or sound from its removal
-	// plays out of sight instead of in front of the player.
+	// Retire the original: hide it and park it far away so any break effect or sound from its removal
+	// plays out of sight, then remove it next frame.
+	g_iState[rock] = Rock_Spent;
 	SetEntityRenderMode(rock, RENDER_NONE);
 
-	float parked[3];
-	float still[3] = {0.0, 0.0, 0.0};
-	parked[0] = rockOrigin[0];
-	parked[1] = rockOrigin[1];
-	parked[2] = rockOrigin[2] + 5000.0;
-	TeleportEntity(rock, parked, NULL_VECTOR, still);
+	origin[2] += 5000.0;
+	TeleportEntity(rock, origin, NULL_VECTOR, view_as<float>({0.0, 0.0, 0.0}));
 
 	RequestFrame(Frame_KillRock, EntIndexToEntRef(rock));
 	return Plugin_Handled;
 }
 
-public void Frame_KillRock(int ref)
+void Frame_KillRock(int ref)
 {
-	int rock = EntRefToEntIndex(ref);
-	if (rock != INVALID_ENT_REFERENCE && rock > MaxClients)
-		AcceptEntityInput(rock, "Kill");
+	KillRef(ref);
+}
+
+Action Timer_KillRock(Handle timer, int ref)
+{
+	KillRef(ref);
+	return Plugin_Stop;
+}
+
+void KillRef(int ref)
+{
+	int ent = EntRefToEntIndex(ref);
+	if (ent > MaxClients)
+		RemoveEntity(ent);
 }
 
 // ---------------------------------------------------------------------------
@@ -222,26 +249,18 @@ public void Frame_KillRock(int ref)
 // ---------------------------------------------------------------------------
 public void OnGameFrame()
 {
-	if (g_hRocks.Length == 0)
-		return;
-
-	float radius = g_cvHitbox.FloatValue;
-
 	for (int i = g_hRocks.Length - 1; i >= 0; i--)
 	{
-		int rock   = EntRefToEntIndex(g_hRocks.Get(i, 0));
-		int client = GetClientOfUserId(g_hRocks.Get(i, 1));
+		int rock = EntRefToEntIndex(g_hRocks.Get(i));
 
-		if (rock == INVALID_ENT_REFERENCE || rock >= MAX_EDICTS)
+		if (rock == INVALID_ENT_REFERENCE)
 		{
-			if (client > 0)
-				Debug(client, "reflected rock is gone without hitting an infected (broke on the world or was removed)");
 			g_hRocks.Erase(i);
 			continue;
 		}
 
-		// Already consumed by the touch hook
-		if (!g_bReflected[rock])
+		// Consumed by the touch hook (or shattering)
+		if (g_iState[rock] != Rock_Reflected)
 		{
 			g_hRocks.Erase(i);
 			continue;
@@ -250,69 +269,62 @@ public void OnGameFrame()
 		float pos[3];
 		GetEntPropVector(rock, Prop_Data, "m_vecAbsOrigin", pos);
 
-		int victim = FindInfectedNear(pos, radius);
+		int victim = FindInfectedNear(pos);
 		if (victim != -1)
-			HitInfected(rock, victim);
+			HitInfected(rock, victim);	// erases the rock from the list
 	}
 }
 
-int FindInfectedNear(const float pos[3], float radius)
+// Living special infected (non-ghost), commons or witches whose center is within the hitbox radius.
+int FindInfectedNear(const float pos[3])
 {
 	float center[3];
 
-	// Special infected / Tanks
 	for (int client = 1; client <= MaxClients; client++)
 	{
-		if (!IsClientInGame(client) || !IsPlayerAlive(client) || GetClientTeam(client) != 3)
-			continue;
-
-		if (GetEntProp(client, Prop_Send, "m_isGhost") == 1)
+		if (!IsClientInGame(client) || GetClientTeam(client) != TEAM_INFECTED || !IsPlayerAlive(client)
+			|| GetEntProp(client, Prop_Send, "m_isGhost"))
 			continue;
 
 		GetClientAbsOrigin(client, center);
-		center[2] += 36.0;
-		if (GetVectorDistance(pos, center) <= radius)
+		if (InHitbox(pos, center))
 			return client;
 	}
 
-	// Commons and witches
+	int ent = FindNearByClass(pos, "infected");
+	return (ent != -1) ? ent : FindNearByClass(pos, "witch");
+}
+
+int FindNearByClass(const float pos[3], const char[] classname)
+{
+	float center[3];
 	int ent = -1;
-	while ((ent = FindEntityByClassname(ent, "infected")) != -1)
+	while ((ent = FindEntityByClassname(ent, classname)) != -1)
 	{
 		if (GetEntProp(ent, Prop_Data, "m_lifeState") != 0)
 			continue;
 
 		GetEntPropVector(ent, Prop_Data, "m_vecAbsOrigin", center);
-		center[2] += 36.0;
-		if (GetVectorDistance(pos, center) <= radius)
+		if (InHitbox(pos, center))
 			return ent;
 	}
-
-	ent = -1;
-	while ((ent = FindEntityByClassname(ent, "witch")) != -1)
-	{
-		if (GetEntProp(ent, Prop_Data, "m_lifeState") != 0)
-			continue;
-
-		GetEntPropVector(ent, Prop_Data, "m_vecAbsOrigin", center);
-		center[2] += 36.0;
-		if (GetVectorDistance(pos, center) <= radius)
-			return ent;
-	}
-
 	return -1;
+}
+
+// center = the target's feet; its body center is 36 units up.
+bool InHitbox(const float pos[3], float center[3])
+{
+	center[2] += 36.0;
+	return GetVectorDistance(pos, center, true) <= g_fHitboxSqr;
 }
 
 // ---------------------------------------------------------------------------
 // Only reflected rocks are hooked here.
 // ---------------------------------------------------------------------------
-public Action Rock_Touch(int rock, int other)
+Action Rock_Touch(int rock, int other)
 {
-	if (!g_cvEnabled.BoolValue || rock >= MAX_EDICTS || !g_bReflected[rock])
-		return Plugin_Continue;
-
 	// World / props: let the game shatter the rock normally
-	if (other <= 0)
+	if (!g_bEnabled || other <= 0 || !IsReflected(rock))
 		return Plugin_Continue;
 
 	if (other <= MaxClients)
@@ -320,92 +332,89 @@ public Action Rock_Touch(int rock, int other)
 		if (!IsClientInGame(other) || !IsPlayerAlive(other))
 			return Plugin_Continue;
 
-		int team = GetClientTeam(other);
-
-		// Pass through survivors, no friendly fire
-		if (team == 2)
-			return Plugin_Handled;
-
-		if (team == 3)
+		switch (GetClientTeam(other))
 		{
-			if (GetEntProp(other, Prop_Send, "m_isGhost") == 1)
+			// Pass through survivors, no friendly fire
+			case TEAM_SURVIVOR: return Plugin_Handled;
+			case TEAM_INFECTED:
+			{
+				if (!GetEntProp(other, Prop_Send, "m_isGhost"))
+					HitInfected(rock, other);
 				return Plugin_Handled;
-
-			HitInfected(rock, other);
-			return Plugin_Handled;
+			}
 		}
-
 		return Plugin_Continue;
 	}
 
-	if (IsValidEntity(other))
+	char cls[16];
+	GetEntityClassname(other, cls, sizeof(cls));
+	if (StrEqual(cls, "infected") || StrEqual(cls, "witch"))
 	{
-		char cls[16];
-		GetEntityClassname(other, cls, sizeof(cls));
-		if (StrEqual(cls, "infected") || StrEqual(cls, "witch"))
-		{
-			HitInfected(rock, other);
-			return Plugin_Handled;
-		}
+		HitInfected(rock, other);
+		return Plugin_Handled;
 	}
-
 	return Plugin_Continue;
 }
 
 void HitInfected(int rock, int victim)
 {
-	if (rock >= MAX_EDICTS || g_bBreaking[rock])
+	if (g_iState[rock] != Rock_Reflected)
 		return;
 
-	int attacker = GetClientOfUserId(g_iparrythisor[rock]);
-	if (attacker < 1 || !IsClientInGame(attacker))
-		attacker = 0;
+	int attacker = GetReflector(rock);
 
-	char cls[32];
-	GetEntityClassname(victim, cls, sizeof(cls));
+	SDKHooks_TakeDamage(victim, rock, attacker, g_fDamage, DMG_CRUSH);
 
-	SDKHooks_TakeDamage(victim, rock, attacker, g_cvDamage.FloatValue, DMG_CRUSH);
-
-	if (attacker > 0)
+	if (g_bDebug && attacker > 0)
 	{
-		if (victim <= MaxClients)
-		{
-			char name[MAX_NAME_LENGTH];
-			GetClientName(victim, name, sizeof(name));
-			Debug(attacker, "rock %d hit %s '%s' (entity %d, team %d) for %.0f damage", rock, cls, name, victim, GetClientTeam(victim), g_cvDamage.FloatValue);
-		}
-		else
-		{
-			Debug(attacker, "rock %d hit %s (entity %d) for %.0f damage", rock, cls, victim, g_cvDamage.FloatValue);
-		}
+		char cls[32];
+		GetEntityClassname(victim, cls, sizeof(cls));
+		Debug(attacker, "rock %d hit %s (entity %d) for %.0f damage", rock, cls, victim, g_fDamage);
 	}
 
-	// Shatter the rock with the game's own break effect by damaging it. It stays
-	// marked as reflected until it's gone so it still can't hurt survivors.
-	g_bBreaking[rock] = true;
+	// Shatter the rock with the game's own break effect by damaging it. Rock_Breaking still counts as
+	// reflected, so it can't hurt survivors until it's gone.
+	g_iState[rock] = Rock_Breaking;
 
-	int idx = g_hRocks.FindValue(EntIndexToEntRef(rock), 0);
+	int idx = g_hRocks.FindValue(EntIndexToEntRef(rock));
 	if (idx != -1)
 		g_hRocks.Erase(idx);
 
 	SDKHooks_TakeDamage(rock, attacker, attacker, 1000.0, DMG_BULLET);
 
 	// Fallback in case the rock survives the damage
-	CreateTimer(0.5, Timer_KillRock, EntIndexToEntRef(rock), TIMER_FLAG_NO_MAPCHANGE);
+	CreateTimer(KILL_FALLBACK, Timer_KillRock, EntIndexToEntRef(rock), TIMER_FLAG_NO_MAPCHANGE);
 }
 
-public Action Timer_KillRock(Handle timer, int ref)
+/**
+ * The survivor credited with a reflected rock's damage and kills. Normally the player who reflected it; if they
+ * went idle while it was in flight, the bot now playing their survivor. 0 (world) if they left or changed team,
+ * so the hit is never credited to a spectator or an infected player.
+ */
+int GetReflector(int rock)
 {
-	int rock = EntRefToEntIndex(ref);
-	if (rock != INVALID_ENT_REFERENCE && rock > MaxClients)
-		AcceptEntityInput(rock, "Kill");
+	int userid = g_iReflector[rock];
+	int client = GetClientOfUserId(userid);
+	if (client == 0)
+		return 0;
 
-	return Plugin_Stop;
+	if (GetClientTeam(client) == TEAM_SURVIVOR && IsPlayerAlive(client))
+		return client;
+
+	for (int bot = 1; bot <= MaxClients; bot++)
+	{
+		if (IsClientInGame(bot) && IsFakeClient(bot) && GetClientTeam(bot) == TEAM_SURVIVOR
+			&& HasEntProp(bot, Prop_Send, "m_humanSpectatorUserID")
+			&& GetEntProp(bot, Prop_Send, "m_humanSpectatorUserID") == userid)
+			return bot;
+	}
+
+	return (GetClientTeam(client) == TEAM_SURVIVOR) ? client : 0;
 }
 
 void Debug(int client, const char[] fmt, any ...)
 {
-	if (!g_cvDebug.BoolValue)
+	if (!g_bDebug)
 		return;
 
 	char buffer[192];
