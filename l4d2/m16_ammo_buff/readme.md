@@ -1,1 +1,0 @@
-A simple sourcemod to increase the reserve ammo of the M16 from 360 > 500 to compete with other assault rifles and take advantage of it's firerate advantage
