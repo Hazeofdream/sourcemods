@@ -57,7 +57,7 @@ public void OnPluginStart()
 {
     cvBaseSurvivors = CreateConVar(
         "dps_base_survivor_count",
-        "1",
+        "4",
         "Human survivor count base values are balanced for",
         FCVAR_NOTIFY,
         true, 1.0,
@@ -84,7 +84,7 @@ public void OnPluginStart()
 
     cvMinScale = CreateConVar(
         "dps_min_scale",
-        "0.25",
+        "1",
         "Lowest scale used when fewer humans than dps_base_survivor_count are playing",
         FCVAR_NOTIFY,
         true, 0.05,
@@ -93,7 +93,7 @@ public void OnPluginStart()
 
     cvBaseTankHealth = CreateConVar(
         "dps_base_tank_health",
-        "7000",
+        "3000",
         "Unscaled z_tank_health (game difficulty multiplier is applied on top)",
         FCVAR_NOTIFY,
         true, 1.0
@@ -216,24 +216,6 @@ void ApplyDirectorScaling()
     SetDirectorCvarFloat("z_special_spawn_interval", respawn);
 
     SetDirectorCvarInt("z_tank_health", tankHP);
-
-    PrintToServer(
-        "[Director Scaling] Humans=%d Scale=%.2f | Smoker=%d Hunter=%d Jockey=%d Charger=%d Spitter=%d Boomer=%d | Commons=%d Mob=%d-%d Wanderers=%d Respawn=%.1f | TankHP=%d",
-        survivors,
-        scale,
-        smoker,
-        hunter,
-        jockey,
-        charger,
-        spitter,
-        boomer,
-        commons,
-        mobMin,
-        mobMax,
-        wanderers,
-        respawn,
-        tankHP
-    );
 }
 
 // =====================
