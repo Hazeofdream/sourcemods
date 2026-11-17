@@ -46,6 +46,7 @@ ConVar cvMaxScaleSurvivors;
 ConVar cvScaleIntensity;
 ConVar cvMinScale;
 ConVar cvBaseTankHealth;
+ConVar cvTankHealthPerPlayer;
 
 Handle g_hRescaleTimer = null;
 
@@ -94,9 +95,17 @@ public void OnPluginStart()
     cvBaseTankHealth = CreateConVar(
         "dps_base_tank_health",
         "3000",
-        "Unscaled z_tank_health (game difficulty multiplier is applied on top)",
+        "z_tank_health with 1 human survivor (the game's difficulty multiplier is applied on top, e.g. x2 on Expert)",
         FCVAR_NOTIFY,
         true, 1.0
+    );
+
+    cvTankHealthPerPlayer = CreateConVar(
+        "dps_tank_health_per_player",
+        "2000",
+        "z_tank_health added for every human survivor after the first (up to dps_max_scaled_survivors). Difficulty multiplier applies on top",
+        FCVAR_NOTIFY,
+        true, 0.0
     );
 
     AutoExecConfig(true, "director_player_scaling");
@@ -106,6 +115,7 @@ public void OnPluginStart()
     cvScaleIntensity.AddChangeHook(OnScalingCvarChanged);
     cvMinScale.AddChangeHook(OnScalingCvarChanged);
     cvBaseTankHealth.AddChangeHook(OnScalingCvarChanged);
+    cvTankHealthPerPlayer.AddChangeHook(OnScalingCvarChanged);
 
     HookEvent("player_team", Event_Rescale, EventHookMode_PostNoCopy);
     HookEvent("bot_player_replace", Event_Rescale, EventHookMode_PostNoCopy);
@@ -198,7 +208,12 @@ void ApplyDirectorScaling()
 
     // Scaling the cvar (rather than the Tank entity) keeps the difficulty
     // multiplier intact and avoids re-healing the Tank on control passes.
-    int tankHP = RoundToNearest(cvBaseTankHealth.FloatValue * scale);
+    // 1 human keeps the base, every extra human adds a flat amount (counted up to dps_max_scaled_survivors).
+    int tankPlayers = survivors;
+    if (tankPlayers > cvMaxScaleSurvivors.IntValue)
+        tankPlayers = cvMaxScaleSurvivors.IntValue;
+
+    int tankHP = cvBaseTankHealth.IntValue + (tankPlayers - 1) * cvTankHealthPerPlayer.IntValue;
 
     SetDirectorCvarInt("z_smoker_limit", smoker);
     SetDirectorCvarInt("z_hunter_limit", hunter);
